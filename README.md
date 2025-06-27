@@ -14,7 +14,9 @@ The interface organizes data from specimen to site (or sample), aligning with th
 
 ### Flexible Styling and Export
 Easily adjust color schemes, layout elements, and export high-quality figures for publication or presentations with minimal effort.
+
 ![EZsciplot_GUI](fig/fig2.jpg)
+
 ### One-Step Initialization for Customization
 Simply run the `entrance.py` file to preview the initial functionality. To customize the plotting software, you only need to replace the plotting calculations and decision functions within the `entrance.py` file, making it easy to share your customized software with others.
 
