@@ -23,10 +23,13 @@ Simply run the `entrance.py` file to preview the initial functionality. To custo
 ### Layered Scientific Data Management
 Organizes data into a hierarchical structure, divided into site/sample levels, followed by specimen, and then parameter layers. This structure facilitates intuitive data management and navigation.
 
+![EZsciplot_GUI](fig/fig1.jpg)
+
 ### Seamless Customization via Dropdown Menu
 The software allows for perfect customization of scientific plots through a style dropdown menu, enabling users to adjust the visual style to match their research needs.
 
 ### Dual-Tab Interface for Data and Plot Filtering
 The dual-tab interface supports filtering data and selecting charts at different hierarchical levels. This feature makes it easy to navigate through complex datasets and focus on specific analysis layers.
 
+![EZsciplot_GUI](fig/fig3.jpg)
 ---
