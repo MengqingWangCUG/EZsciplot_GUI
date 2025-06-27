@@ -1,3 +1,4 @@
+![EZsciplot_GUI](icon/icon.png)
 # EZsciplot_GUI
 EZsciplot_GUI is a versatile and user-friendly scientific plotting interface built with PySide6, designed to streamline the visualization and export of research data, particularly in disciplines that require customized plotting workflows.
 
