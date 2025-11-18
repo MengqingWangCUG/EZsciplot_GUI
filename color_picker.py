@@ -4,9 +4,10 @@ from PySide6.QtWidgets import (
     QGridLayout, QGroupBox, QSlider, QTabWidget, QWidget, QScrollArea, 
     QSizePolicy
 )
-from PySide6.QtGui import QColor, QPainter
+from PySide6.QtGui import QColor, QPainter, QImage
 from PySide6.QtCore import Qt, Signal
 import colorsys
+import re
 
 
 class ColorPickerArea(QWidget):
@@ -19,10 +20,13 @@ class ColorPickerArea(QWidget):
         self.current_hue = 0.5
         self.current_sat = 1.0
         self.current_val = 1.0
+        self.gradient_image = None
+        self._gradient_dirty = True
         
     def set_hue(self, hue):
         """Set hue value"""
         self.current_hue = hue
+        self._gradient_dirty = True
         self.update()
         
     def set_position(self, sat, val):
@@ -34,17 +38,9 @@ class ColorPickerArea(QWidget):
     def paintEvent(self, event):
         """Paint the color area with saturation-value gradient"""
         painter = QPainter(self)
-        
-        # Draw saturation-value gradient
-        for x in range(256):
-            for y in range(128):
-                sat = x / 255.0
-                val = 1.0 - (y / 127.0)
-                
-                r, g, b = colorsys.hsv_to_rgb(self.current_hue, sat, val)
-                color = QColor(int(r * 255), int(g * 255), int(b * 255))
-                painter.setPen(color)
-                painter.drawPoint(x, y)
+        self._ensure_gradient_image()
+        if self.gradient_image:
+            painter.drawImage(self.rect(), self.gradient_image)
         
         # Draw current position marker
         x = int(self.current_sat * 255)
@@ -80,6 +76,28 @@ class ColorPickerArea(QWidget):
         self.color_changed.emit(sat, val)
             
         self.update()
+    
+    def resizeEvent(self, event):
+        """Mark gradient for regeneration on resize"""
+        self._gradient_dirty = True
+        super().resizeEvent(event)
+    
+    def _ensure_gradient_image(self):
+        """Cache the gradient image to avoid repaint overhead"""
+        width = max(1, self.width())
+        height = max(1, self.height())
+        if (self.gradient_image is None or
+                self.gradient_image.size() != self.size() or
+                self._gradient_dirty):
+            image = QImage(width, height, QImage.Format_RGB32)
+            for x in range(width):
+                sat = x / (width - 1 if width > 1 else 1)
+                for y in range(height):
+                    val = 1.0 - (y / (height - 1 if height > 1 else 1))
+                    r, g, b = colorsys.hsv_to_rgb(self.current_hue, sat, val)
+                    image.setPixelColor(x, y, QColor(int(r * 255), int(g * 255), int(b * 255)))
+            self.gradient_image = image
+            self._gradient_dirty = False
 
 
 class HueBar(QWidget):
@@ -92,6 +110,8 @@ class HueBar(QWidget):
         super().__init__(parent)
         self.setFixedSize(256, 20)
         self.current_hue = 0.5
+        self.hue_image = None
+        self._hue_dirty = True
         
     def set_hue(self, hue):
         """Set hue value"""
@@ -101,14 +121,9 @@ class HueBar(QWidget):
     def paintEvent(self, event):
         """Paint the hue bar with hue gradient"""
         painter = QPainter(self)
-        
-        # Draw hue gradient
-        for x in range(256):
-            hue = x / 255.0
-            r, g, b = colorsys.hsv_to_rgb(hue, 1.0, 1.0)
-            color = QColor(int(r * 255), int(g * 255), int(b * 255))
-            painter.setPen(color)
-            painter.drawLine(x, 0, x, 20)
+        self._ensure_hue_image()
+        if self.hue_image:
+            painter.drawImage(self.rect(), self.hue_image)
         
         # Draw current position marker
         x = int(self.current_hue * 255)
@@ -139,6 +154,28 @@ class HueBar(QWidget):
         self.hue_changed.emit(hue)
             
         self.update()
+    
+    def resizeEvent(self, event):
+        """Regenerate cached hue gradient when resized"""
+        self._hue_dirty = True
+        super().resizeEvent(event)
+    
+    def _ensure_hue_image(self):
+        """Cache hue gradient"""
+        width = max(1, self.width())
+        height = max(1, self.height())
+        if (self.hue_image is None or
+                self.hue_image.size() != self.size() or
+                self._hue_dirty):
+            image = QImage(width, height, QImage.Format_RGB32)
+            for x in range(width):
+                hue = x / (width - 1 if width > 1 else 1)
+                r, g, b = colorsys.hsv_to_rgb(hue, 1.0, 1.0)
+                color = QColor(int(r * 255), int(g * 255), int(b * 255))
+                for y in range(height):
+                    image.setPixelColor(x, y, color)
+            self.hue_image = image
+            self._hue_dirty = False
 
 
 class GradientColorPicker(QWidget):
@@ -152,6 +189,7 @@ class GradientColorPicker(QWidget):
         self.current_val = 1.0  # Current value (0-1)
         self.color_changed_callback = None
         self.setFixedSize(300, 280)
+        self.hex_color_pattern = re.compile(r'^#[0-9a-fA-F]{6}$')
         self.create_ui()
         
     def create_ui(self):
@@ -177,6 +215,13 @@ class GradientColorPicker(QWidget):
         input_layout.addWidget(QLabel("Color:"))
         
         self.color_input = QLineEdit(self.current_color)
+        self.color_input.setStyleSheet("""
+            QLineEdit[invalid="true"] {
+                border: 1px solid #dc3545;
+                background-color: #fff5f5;
+            }
+        """)
+        self._set_color_input_error(False)
         self.color_input.textChanged.connect(self.on_color_input_changed)
         input_layout.addWidget(self.color_input)
         
@@ -246,6 +291,7 @@ class GradientColorPicker(QWidget):
         self.color_input.blockSignals(True)
         self.color_input.setText(hex_color)
         self.color_input.blockSignals(False)
+        self._set_color_input_error(False)
         
         self.update_color_preview()
         
@@ -274,49 +320,65 @@ class GradientColorPicker(QWidget):
         self.color_input.blockSignals(True)
         self.color_input.setText(hex_color)
         self.color_input.blockSignals(False)
+        self._set_color_input_error(False)
         
         self.update_color_preview()
         
         if self.color_changed_callback:
             self.color_changed_callback(hex_color)
+
+    def _set_color_input_error(self, has_error, message=""):
+        """Toggle visual feedback for the hex input"""
+        if not hasattr(self, 'color_input'):
+            return
+        self.color_input.setProperty("invalid", has_error)
+        self.color_input.setToolTip(message if has_error else "")
+        self.color_input.style().unpolish(self.color_input)
+        self.color_input.style().polish(self.color_input)
+        self.color_input.update()
             
     def on_color_input_changed(self, text):
         """Handle color input text changes"""
+        text = (text or "").strip()
+        if not self.hex_color_pattern.match(text):
+            self._set_color_input_error(True, "Use hex format like #1a2b3c.")
+            return
         try:
-            if text.startswith('#') and len(text) == 7:
-                r = int(text[1:3], 16) / 255.0
-                g = int(text[3:5], 16) / 255.0
-                b = int(text[5:7], 16) / 255.0
-                
-                h, s, v = colorsys.rgb_to_hsv(r, g, b)
-                
-                self.current_hue = h
-                self.current_sat = s
-                self.current_val = v
-                self.current_color = text
-                
-                self.hue_bar.set_hue(h)
-                self.color_area.set_hue(h)
-                self.color_area.set_position(s, v)
-                
-                self.r_spin.blockSignals(True)
-                self.g_spin.blockSignals(True)
-                self.b_spin.blockSignals(True)
-                
-                self.r_spin.setValue(int(r * 255))
-                self.g_spin.setValue(int(g * 255))
-                self.b_spin.setValue(int(b * 255))
-                
-                self.r_spin.blockSignals(False)
-                self.g_spin.blockSignals(False)
-                self.b_spin.blockSignals(False)
-                
-                self.update_color_preview()
-                
-                if self.color_changed_callback:
-                    self.color_changed_callback(text)
-        except:
-            pass
+            r = int(text[1:3], 16) / 255.0
+            g = int(text[3:5], 16) / 255.0
+            b = int(text[5:7], 16) / 255.0
+        except ValueError:
+            self._set_color_input_error(True, "Unable to parse color.")
+            return
+        
+        self._set_color_input_error(False)
+        h, s, v = colorsys.rgb_to_hsv(r, g, b)
+        
+        self.current_hue = h
+        self.current_sat = s
+        self.current_val = v
+        self.current_color = text
+        
+        self.hue_bar.set_hue(h)
+        self.color_area.set_hue(h)
+        self.color_area.set_position(s, v)
+        
+        self.r_spin.blockSignals(True)
+        self.g_spin.blockSignals(True)
+        self.b_spin.blockSignals(True)
+        
+        self.r_spin.setValue(int(r * 255))
+        self.g_spin.setValue(int(g * 255))
+        self.b_spin.setValue(int(b * 255))
+        
+        self.r_spin.blockSignals(False)
+        self.g_spin.blockSignals(False)
+        self.b_spin.blockSignals(False)
+        
+        self.update_color_preview()
+        
+        if self.color_changed_callback:
+            self.color_changed_callback(text)
             
     def update_color_preview(self):
         """Update the color preview button"""

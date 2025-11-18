@@ -31,6 +31,7 @@ class TestAppManager:
         test_data = TestData(num_plots=num_plots, num_params=num_params, custom_param_labels=custom_param_labels)
         
         # Inject test data into DataTab
+        # Keep reference to Site objects (new structure)
         window.data_tab.sample_data = test_data.sites
         window.data_tab.test_data_generator = test_data
         
@@ -678,19 +679,12 @@ class TestAppManager:
         control_layout = QHBoxLayout()
         control_layout.setSpacing(config['control_spacing'])
         
-        # Refresh button
-        refresh_btn = QPushButton("Refresh")
-        refresh_btn.clicked.connect(lambda checked, idx=index: data_tab.refresh_plot(idx))
-        refresh_btn.setMaximumWidth(config['button_max_width'])
-        refresh_btn.setStyleSheet(data_tab._get_button_style())
-        
         # Export button
         export_btn = QPushButton("Export")
         export_btn.clicked.connect(lambda checked, idx=index: data_tab.export_plot(idx))
         export_btn.setMaximumWidth(config['button_max_width'])
         export_btn.setStyleSheet(data_tab._get_button_style())
         
-        control_layout.addWidget(refresh_btn)
         control_layout.addWidget(export_btn)
         control_layout.addStretch()
         canvas = MplCanvas()

@@ -5,6 +5,242 @@ from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QIcon
 
 
+class Sample:
+    """Sample (Specimen) class - stores individual sample data and metadata"""
+    
+    def __init__(self, name, site_name, num_plots=8):
+        """
+        Initialize Sample instance
+        
+        Args:
+            name (str): Sample name
+            site_name (str): Parent site name
+            num_plots (int): Number of plots for this sample
+        """
+        self.name = name
+        self.site_name = site_name
+        self.num_plots = num_plots
+        self.plot_data = {}  # Store all plot data: {'plot1': {...}, 'plot2': {...}, ...}
+        self.metadata = {}   # Store additional metadata
+        self.statistics = {} # Store calculated statistics
+        
+    def add_plot_data(self, plot_index, data):
+        """Add plot data for specific plot index"""
+        plot_key = f'plot{plot_index + 1}'
+        self.plot_data[plot_key] = data
+        
+    def get_plot_data(self, plot_index):
+        """Get plot data for specific plot index"""
+        plot_key = f'plot{plot_index + 1}'
+        return self.plot_data.get(plot_key, None)
+    
+    def get_all_plot_data(self):
+        """Get all plot data"""
+        return self.plot_data.copy()
+    
+    def calculate_statistics(self, range_up=100, range_down=1):
+        """Calculate statistics for this sample within specified range"""
+        stats = {
+            'range_up': range_up,
+            'range_down': range_down,
+            'plot_stats': {}
+        }
+        
+        all_y_values = []
+        
+        for plot_key, data in self.plot_data.items():
+            if not data:
+                continue
+                
+            x_values = data.get('x')
+            if x_values is None:
+                continue
+            
+            # Handle multi-line data
+            if 'y1' in data and 'y2' in data:
+                y1_values = data['y1']
+                y2_values = data['y2']
+                range_mask = (x_values >= range_down) & (x_values <= range_up)
+                
+                if np.any(range_mask):
+                    y1_range = y1_values[range_mask]
+                    y2_range = y2_values[range_mask]
+                    combined_avg = np.mean(np.concatenate([y1_range, y2_range]))
+                    
+                    stats['plot_stats'][plot_key] = {
+                        'type': 'multi_line',
+                        'average': float(combined_avg),
+                        'y1_average': float(np.mean(y1_range)),
+                        'y2_average': float(np.mean(y2_range)),
+                        'std': float(np.std(np.concatenate([y1_range, y2_range])))
+                    }
+                    all_y_values.extend(y1_range)
+                    all_y_values.extend(y2_range)
+            # Handle single-line data
+            elif 'y' in data:
+                y_values = data['y']
+                range_mask = (x_values >= range_down) & (x_values <= range_up)
+                
+                if np.any(range_mask):
+                    y_range = y_values[range_mask]
+                    stats['plot_stats'][plot_key] = {
+                        'type': 'single_line',
+                        'average': float(np.mean(y_range)),
+                        'std': float(np.std(y_range)),
+                        'min': float(np.min(y_range)),
+                        'max': float(np.max(y_range)),
+                        'median': float(np.median(y_range))
+                    }
+                    all_y_values.extend(y_range)
+        
+        # Calculate overall statistics
+        if all_y_values:
+            all_y_array = np.array(all_y_values)
+            stats['overall'] = {
+                'average': float(np.mean(all_y_array)),
+                'std': float(np.std(all_y_array)),
+                'min': float(np.min(all_y_array)),
+                'max': float(np.max(all_y_array)),
+                'median': float(np.median(all_y_array)),
+                'count': len(all_y_values)
+            }
+        
+        self.statistics = stats
+        return stats
+    
+    def set_metadata(self, key, value):
+        """Set metadata for this sample"""
+        self.metadata[key] = value
+        
+    def get_metadata(self, key, default=None):
+        """Get metadata for this sample"""
+        return self.metadata.get(key, default)
+    
+    def __repr__(self):
+        return f"Sample(name='{self.name}', site='{self.site_name}', plots={len(self.plot_data)})"
+
+
+class Site:
+    """Site class - manages collection of samples"""
+    
+    def __init__(self, name):
+        """
+        Initialize Site instance
+        
+        Args:
+            name (str): Site name
+        """
+        self.name = name
+        self.samples = {}  # Dictionary of samples: {sample_name: Sample instance}
+        self.metadata = {} # Store site-level metadata
+        self.statistics = {} # Store site-level statistics
+        
+    def add_sample(self, sample_name, num_plots=8):
+        """
+        Add a new sample to this site
+        
+        Args:
+            sample_name (str): Name of the sample
+            num_plots (int): Number of plots for this sample
+            
+        Returns:
+            Sample: The created Sample instance
+        """
+        if sample_name in self.samples:
+            print(f"Warning: Sample '{sample_name}' already exists in site '{self.name}'")
+            return self.samples[sample_name]
+        
+        sample = Sample(sample_name, self.name, num_plots)
+        self.samples[sample_name] = sample
+        return sample
+    
+    def remove_sample(self, sample_name):
+        """
+        Remove a sample from this site
+        
+        Args:
+            sample_name (str): Name of the sample to remove
+            
+        Returns:
+            bool: True if removed, False if not found
+        """
+        if sample_name in self.samples:
+            del self.samples[sample_name]
+            return True
+        return False
+    
+    def get_sample(self, sample_name):
+        """Get a sample by name"""
+        return self.samples.get(sample_name, None)
+    
+    def get_all_samples(self):
+        """Get all samples in this site"""
+        return self.samples.copy()
+    
+    def get_sample_names(self):
+        """Get list of all sample names"""
+        return list(self.samples.keys())
+    
+    def calculate_statistics(self, range_up=100, range_down=1):
+        """Calculate site-level statistics from all samples"""
+        if not self.samples:
+            return {}
+        
+        # First ensure all samples have calculated their statistics
+        for sample in self.samples.values():
+            sample.calculate_statistics(range_up, range_down)
+        
+        stats = {
+            'range_up': range_up,
+            'range_down': range_down,
+            'sample_count': len(self.samples),
+            'samples_stats': {}
+        }
+        
+        # Collect averages from all samples
+        all_sample_averages = []
+        
+        for sample_name, sample in self.samples.items():
+            if sample.statistics and 'overall' in sample.statistics:
+                sample_avg = sample.statistics['overall']['average']
+                all_sample_averages.append(sample_avg)
+                stats['samples_stats'][sample_name] = sample.statistics['overall']
+        
+        # Calculate site-level statistics
+        if all_sample_averages:
+            avg_array = np.array(all_sample_averages)
+            stats['site_overall'] = {
+                'average': float(np.mean(avg_array)),
+                'std': float(np.std(avg_array)),
+                'min': float(np.min(avg_array)),
+                'max': float(np.max(avg_array)),
+                'median': float(np.median(avg_array)),
+                'count': len(all_sample_averages)
+            }
+        
+        self.statistics = stats
+        return stats
+    
+    def set_metadata(self, key, value):
+        """Set metadata for this site"""
+        self.metadata[key] = value
+        
+    def get_metadata(self, key, default=None):
+        """Get metadata for this site"""
+        return self.metadata.get(key, default)
+    
+    def __repr__(self):
+        return f"Site(name='{self.name}', samples={len(self.samples)})"
+    
+    def __getitem__(self, sample_name):
+        """Allow dict-like access to samples"""
+        return self.get_sample(sample_name)
+    
+    def __contains__(self, sample_name):
+        """Check if sample exists in site"""
+        return sample_name in self.samples
+
+
 class TestData:
     """Test data generator for scientific specimen analysis and visualization"""
     
@@ -20,13 +256,28 @@ class TestData:
         self.num_plots = num_plots
         self.num_params = num_params
         
-        # Site and specimen data structure
-        self.sites = {
-            "Site A": ["Sample A1", "Sample A2", "Sample A3"],
-            "Site B": ["Sample B1", "Sample B2"],
-            "Site C": ["Sample C1", "Sample C2", "Sample C3", "Sample C4"],
-            "Site D": ["Sample D1", "Sample D2"]
-        }
+        # Site management - now uses Site class
+        self.sites = {}  # Dictionary of sites: {site_name: Site instance}
+        
+        # Data storage for filtering states and calculation results
+        self.filter_states = {}  # Store filter conditions: {site: {specimen: {param_index: condition}}}
+        self.filter_results = {}  # Store filter match results: {site: {specimen: {param_index: bool}}}
+        self.calculation_cache = {}  # Cache calculation results: {site: {specimen: {range_key: stats}}}
+        self.plot_data_cache = {}  # Cache plot data: {site: {specimen: plot_data}}
+        
+        # Range settings storage
+        self.current_range_up = 100  # Current range upper limit
+        self.current_range_down = 1  # Current range lower limit
+        self.range_history = []  # History of range changes: [(up, down, timestamp), ...]
+        
+        # Current selection state
+        self.current_site = None  # Currently selected site
+        self.current_specimen = None  # Currently selected specimen
+        self.selection_history = []  # History of selections: [(site, specimen, timestamp), ...]
+        
+        # Sample selection state (for selection tab)
+        self.selected_samples = set()  # Set of selected sample identifiers: {(site, specimen), ...}
+        self.selection_plot_data = {}  # Cached plot data for selections: {selection_key: plot_data}
         
         # Generate parameter labels based on num_params and custom labels
         if custom_param_labels and len(custom_param_labels) >= num_params:
@@ -49,35 +300,284 @@ class TestData:
         # Dynamically generate plot titles based on num_plots
         self.plot_titles = [f"Plot {i+1}" for i in range(self.num_plots)]
         
-        # Add data caching system
-        self.data_cache = {}
-        self._initialize_all_data()
+        # Initialize default test sites and samples
+        self._initialize_default_data()
     
-    def _initialize_all_data(self):
-        """
-        Initialize all specimen data once and cache it
-        """
-        print("Initializing all specimen data...")
+    def _initialize_default_data(self):
+        """Initialize default test sites and samples"""
+        print("Initializing default test data structure...")
         
         # Set random seed for reproducible results
         np.random.seed(42)
         
-        # Generate data for all sites and specimens
-        for site_name, specimens in self.sites.items():
-            for specimen in specimens:
-                # Create cache key
-                cache_key = f"{site_name}_{specimen}"
-                
-                # Generate all plot data for this specimen
-                specimen_data = {}
-                for i in range(self.num_plots):
-                    plot_key = f'plot{i+1}'
-                    specimen_data[plot_key] = self._generate_single_plot_data(i, specimen, site_name)
-                
-                # Cache the data
-                self.data_cache[cache_key] = specimen_data
+        # Define default structure
+        default_structure = {
+            "Site A": ["Sample A1", "Sample A2", "Sample A3"],
+            "Site B": ["Sample B1", "Sample B2"],
+            "Site C": ["Sample C1", "Sample C2", "Sample C3", "Sample C4"],
+            "Site D": ["Sample D1", "Sample D2"]
+        }
         
-        print(f"Data initialization complete. Cached {len(self.data_cache)} specimens.")
+        # Create sites and samples
+        for site_name, sample_names in default_structure.items():
+            self.add_site(site_name)
+            for sample_name in sample_names:
+                self.add_sample(site_name, sample_name)
+        
+        print(f"Initialization complete. Created {len(self.sites)} sites with {sum(len(site.samples) for site in self.sites.values())} samples.")
+    
+    # ========== Site Management Methods ==========
+    
+    def add_site(self, site_name):
+        """
+        Add a new site
+        
+        Args:
+            site_name (str): Name of the site to add
+            
+        Returns:
+            Site: The created Site instance, or existing site if already exists
+        """
+        if site_name in self.sites:
+            print(f"Warning: Site '{site_name}' already exists")
+            return self.sites[site_name]
+        
+        site = Site(site_name)
+        self.sites[site_name] = site
+        print(f"Added site: {site_name}")
+        return site
+    
+    def remove_site(self, site_name):
+        """
+        Remove a site and all its samples
+        
+        Args:
+            site_name (str): Name of the site to remove
+            
+        Returns:
+            bool: True if removed, False if not found
+        """
+        if site_name in self.sites:
+            sample_count = len(self.sites[site_name].samples)
+            del self.sites[site_name]
+            print(f"Removed site: {site_name} (with {sample_count} samples)")
+            return True
+        print(f"Warning: Site '{site_name}' not found")
+        return False
+    
+    def get_site(self, site_name):
+        """
+        Get a site by name
+        
+        Args:
+            site_name (str): Name of the site
+            
+        Returns:
+            Site: Site instance or None if not found
+        """
+        return self.sites.get(site_name, None)
+    
+    def get_all_sites(self):
+        """Get all sites"""
+        return self.sites.copy()
+    
+    def get_site_names(self):
+        """Get list of all site names"""
+        return list(self.sites.keys())
+    
+    def rename_site(self, old_name, new_name):
+        """
+        Rename a site
+        
+        Args:
+            old_name (str): Current site name
+            new_name (str): New site name
+            
+        Returns:
+            bool: True if renamed successfully, False otherwise
+        """
+        if old_name not in self.sites:
+            print(f"Warning: Site '{old_name}' not found")
+            return False
+        
+        if new_name in self.sites:
+            print(f"Warning: Site '{new_name}' already exists")
+            return False
+        
+        site = self.sites[old_name]
+        site.name = new_name
+        
+        # Update all samples' site_name
+        for sample in site.samples.values():
+            sample.site_name = new_name
+        
+        self.sites[new_name] = site
+        del self.sites[old_name]
+        
+        print(f"Renamed site: {old_name} -> {new_name}")
+        return True
+    
+    # ========== Sample Management Methods ==========
+    
+    def add_sample(self, site_name, sample_name, num_plots=None):
+        """
+        Add a new sample to a site
+        
+        Args:
+            site_name (str): Name of the site
+            sample_name (str): Name of the sample
+            num_plots (int): Number of plots (default: use self.num_plots)
+            
+        Returns:
+            Sample: The created Sample instance or None if site not found
+        """
+        site = self.get_site(site_name)
+        if not site:
+            print(f"Warning: Site '{site_name}' not found. Creating site first.")
+            site = self.add_site(site_name)
+        
+        if num_plots is None:
+            num_plots = self.num_plots
+        
+        sample = site.add_sample(sample_name, num_plots)
+        
+        # Generate plot data for this sample
+        self._generate_sample_data(site_name, sample_name)
+        
+        print(f"Added sample: {sample_name} to site: {site_name}")
+        return sample
+    
+    def remove_sample(self, site_name, sample_name):
+        """
+        Remove a sample from a site
+        
+        Args:
+            site_name (str): Name of the site
+            sample_name (str): Name of the sample to remove
+            
+        Returns:
+            bool: True if removed, False if not found
+        """
+        site = self.get_site(site_name)
+        if not site:
+            print(f"Warning: Site '{site_name}' not found")
+            return False
+        
+        result = site.remove_sample(sample_name)
+        if result:
+            print(f"Removed sample: {sample_name} from site: {site_name}")
+        else:
+            print(f"Warning: Sample '{sample_name}' not found in site '{site_name}'")
+        return result
+    
+    def get_sample(self, site_name, sample_name):
+        """
+        Get a sample from a site
+        
+        Args:
+            site_name (str): Name of the site
+            sample_name (str): Name of the sample
+            
+        Returns:
+            Sample: Sample instance or None if not found
+        """
+        site = self.get_site(site_name)
+        if not site:
+            return None
+        return site.get_sample(sample_name)
+    
+    def rename_sample(self, site_name, old_name, new_name):
+        """
+        Rename a sample within a site
+        
+        Args:
+            site_name (str): Name of the site
+            old_name (str): Current sample name
+            new_name (str): New sample name
+            
+        Returns:
+            bool: True if renamed successfully, False otherwise
+        """
+        site = self.get_site(site_name)
+        if not site:
+            print(f"Warning: Site '{site_name}' not found")
+            return False
+        
+        sample = site.get_sample(old_name)
+        if not sample:
+            print(f"Warning: Sample '{old_name}' not found in site '{site_name}'")
+            return False
+        
+        if new_name in site.samples:
+            print(f"Warning: Sample '{new_name}' already exists in site '{site_name}'")
+            return False
+        
+        # Update sample name
+        sample.name = new_name
+        site.samples[new_name] = sample
+        del site.samples[old_name]
+        
+        print(f"Renamed sample: {old_name} -> {new_name} in site: {site_name}")
+        return True
+    
+    def move_sample(self, from_site, to_site, sample_name):
+        """
+        Move a sample from one site to another
+        
+        Args:
+            from_site (str): Source site name
+            to_site (str): Destination site name
+            sample_name (str): Name of the sample to move
+            
+        Returns:
+            bool: True if moved successfully, False otherwise
+        """
+        source_site = self.get_site(from_site)
+        if not source_site:
+            print(f"Warning: Source site '{from_site}' not found")
+            return False
+        
+        sample = source_site.get_sample(sample_name)
+        if not sample:
+            print(f"Warning: Sample '{sample_name}' not found in site '{from_site}'")
+            return False
+        
+        # Create destination site if it doesn't exist
+        dest_site = self.get_site(to_site)
+        if not dest_site:
+            dest_site = self.add_site(to_site)
+        
+        # Check if sample already exists in destination
+        if sample_name in dest_site.samples:
+            print(f"Warning: Sample '{sample_name}' already exists in site '{to_site}'")
+            return False
+        
+        # Move sample
+        sample.site_name = to_site
+        dest_site.samples[sample_name] = sample
+        del source_site.samples[sample_name]
+        
+        print(f"Moved sample: {sample_name} from {from_site} to {to_site}")
+        return True
+    
+    # ========== Data Generation Methods ==========
+    
+    def _generate_sample_data(self, site_name, sample_name):
+        """
+        Generate plot data for a specific sample
+        
+        Args:
+            site_name (str): Name of the site
+            sample_name (str): Name of the sample
+        """
+        sample = self.get_sample(site_name, sample_name)
+        if not sample:
+            return
+        
+        # Generate data for each plot
+        for i in range(sample.num_plots):
+            plot_data = self._generate_single_plot_data(i, sample_name, site_name)
+            sample.add_plot_data(i, plot_data)
     
     def _generate_single_plot_data(self, plot_index, specimen, site_name):
         """
@@ -112,65 +612,82 @@ class TestData:
         plot_func = plot_types[plot_index % len(plot_types)]
         return plot_func(plot_index + 1, specimen)
     
-    def clear_data_cache(self):
+    def regenerate_sample_data(self, site_name, sample_name):
         """
-        Clear the data cache and regenerate all data
+        Regenerate plot data for a specific sample
+        
+        Args:
+            site_name (str): Name of the site
+            sample_name (str): Name of the sample
+            
+        Returns:
+            bool: True if regenerated successfully
         """
-        print("Clearing data cache and regenerating...")
-        self.data_cache.clear()
-        self._initialize_all_data()
+        sample = self.get_sample(site_name, sample_name)
+        if not sample:
+            print(f"Warning: Sample '{sample_name}' not found in site '{site_name}'")
+            return False
+        
+        # Clear existing plot data
+        sample.plot_data.clear()
+        
+        # Regenerate
+        self._generate_sample_data(site_name, sample_name)
+        print(f"Regenerated data for sample: {sample_name} in site: {site_name}")
+        return True
+    
+    def regenerate_all_data(self):
+        """Regenerate all plot data for all samples in all sites"""
+        print("Regenerating all data...")
+        np.random.seed(42)  # Reset seed for reproducibility
+        
+        for site_name, site in self.sites.items():
+            for sample_name in site.get_sample_names():
+                sample = site.get_sample(sample_name)
+                sample.plot_data.clear()
+                self._generate_sample_data(site_name, sample_name)
+        
+        print("All data regenerated.")
+    
+    # ========== Legacy Compatibility Methods ==========
     
     def get_cache_info(self):
         """
-        Get information about the data cache
+        Get information about the data structure (legacy compatibility)
         
         Returns:
-            dict: Cache information
+            dict: Data structure information
         """
-        total_specimens = sum(len(specimens) for specimens in self.sites.values())
-        cached_specimens = len(self.data_cache)
+        total_specimens = sum(len(site.samples) for site in self.sites.values())
         
         return {
+            'total_sites': len(self.sites),
             'total_specimens': total_specimens,
-            'cached_specimens': cached_specimens,
-            'cache_complete': cached_specimens == total_specimens,
-            'sites': list(self.sites.keys()),
-            'cached_keys': list(self.data_cache.keys())
+            'sites': self.get_site_names(),
+            'structure': {
+                site_name: site.get_sample_names() 
+                for site_name, site in self.sites.items()
+            }
         }
 
     def format_significant_figures(self, value, sig_figs=5):
-        """
-        Format number to specified significant figures with scientific notation when appropriate
-        
-        Args:
-            value: Numeric value to format
-            sig_figs (int): Number of significant figures (default: 5)
-            
-        Returns:
-            str: Formatted string with significant figures
-        """
+        """Format number to specified significant figures"""
         try:
             val = float(value)
             if val == 0:
                 return "0.0000"
             
-            # Calculate the order of magnitude
             magnitude = int(np.floor(np.log10(abs(val))))
             
-            # Use scientific notation for very large or very small numbers
             if magnitude >= 4 or magnitude < -2:
-                # Scientific notation
                 mantissa = val / (10 ** magnitude)
                 formatted_mantissa = f"{mantissa:.{sig_figs-1}f}"
                 return f"{formatted_mantissa}e{magnitude:+d}"
             else:
-                # Regular notation with significant figures
                 if magnitude >= 0:
-                    # Number >= 1
                     decimal_places = max(0, sig_figs - magnitude - 1)
                     return f"{val:.{decimal_places}f}"
                 else:
-                    # Number < 1
                     decimal_places = sig_figs - magnitude - 1
                     return f"{val:.{decimal_places}f}"
                     
@@ -178,420 +695,12 @@ class TestData:
             return str(value)
 
     def parse_formatted_value(self, formatted_str):
-        """
-        Parse formatted string back to float value
-        
-        Args:
-            formatted_str (str): Formatted string with significant figures
-            
-        Returns:
-            float: Parsed numeric value
-        """
+        """Parse formatted string back to float value"""
         try:
-            # Handle scientific notation
-            if 'e' in formatted_str.lower():
-                return float(formatted_str)
-            else:
-                return float(formatted_str)
+            return float(formatted_str)
         except (ValueError, TypeError):
             return 0.0
 
-    def parse_filter_expression(self, expression):
-        """
-        Parse filter expression into operator and value
-        
-        Args:
-            expression (str): Filter expression (e.g., ">5", "<=10")
-            
-        Returns:
-            tuple: (operator, value) or None if invalid
-        """
-        if not expression or not expression.strip():
-            return None
-            
-        expression = expression.strip()
-        
-        # Define supported operators in order of precedence
-        patterns = [
-            (r'^>=\s*(-?\d+\.?\d*)$', '>='),
-            (r'^<=\s*(-?\d+\.?\d*)$', '<='),
-            (r'^!=\s*(-?\d+\.?\d*)$', '!='),
-            (r'^>\s*(-?\d+\.?\d*)$', '>'),
-            (r'^<\s*(-?\d+\.?\d*)$', '<'),
-            (r'^=\s*(-?\d+\.?\d*)$', '='),
-            (r'^(-?\d+\.?\d*)$', '='),
-        ]
-        
-        for pattern, operator in patterns:
-            match = re.match(pattern, expression)
-            if match:
-                try:
-                    value = float(match.group(1))
-                    return (operator, value)
-                except (ValueError, IndexError):
-                    continue
-        
-        return None
-
-    def check_parameter_condition_independently(self, site, specimen, parameter_index, condition_str, range_up=100, range_down=1):
-        """
-        Check parameter condition using string-based comparison for exact matching
-        """
-        # Validate parameter index
-        if parameter_index < 0 or parameter_index >= len(self.parameter_labels):
-            return True  # Invalid index, default to pass
-        
-        param_label = self.parameter_labels[parameter_index]
-        
-        # If no condition specified, parameter passes
-        if not condition_str or not condition_str.strip():
-            return True
-        
-        # Get specimen summary for this range
-        specimen_summary = self.get_range_based_specimen_summary(site, specimen, range_up, range_down)
-        specimen_value_str = specimen_summary.get(param_label, '0')
-        
-        # Parse the condition
-        parsed = self.parse_filter_expression(condition_str)
-        if not parsed:
-            return True  # Invalid condition format, default to pass
-        
-        operator, threshold = parsed
-        
-        try:
-            if specimen_value_str == 'N/A' or not specimen_value_str:
-                return True  # No valid value, default to pass
-            
-            # For equality comparison, use string exact matching
-            if operator == '=':
-                # Format threshold to same format as display value
-                threshold_formatted = self.format_significant_figures(threshold, 5)
-                
-                print(f"Debug: Parameter '{param_label}' - Display Value: '{specimen_value_str}', Formatted Threshold: '{threshold_formatted}', Condition: {operator}")
-                
-                # String exact comparison
-                result = specimen_value_str.strip() == threshold_formatted.strip()
-                
-                print(f"Debug: String comparison result = {result}")
-                return result
-            
-            # For other comparison operations, use numerical comparison
-            specimen_value = self.parse_formatted_value(specimen_value_str)
-            threshold_value = float(threshold)
-            
-            print(f"Debug: Parameter '{param_label}' - Display Value: '{specimen_value_str}' ({specimen_value}), Threshold: {threshold_value}, Condition: {operator}")
-            
-            if operator == '>':
-                result = specimen_value > threshold_value
-            elif operator == '>=':
-                result = specimen_value >= threshold_value
-            elif operator == '<':
-                result = specimen_value < threshold_value
-            elif operator == '<=':
-                result = specimen_value <= threshold_value
-            elif operator == '!=':
-                # Use string comparison for inequality to ensure precision
-                threshold_formatted = self.format_significant_figures(threshold_value, 5)
-                result = specimen_value_str.strip() != threshold_formatted.strip()
-            else:
-                result = True
-            
-            print(f"Debug: Result = {result}")
-            return result
-
-        except (ValueError, TypeError) as e:
-            print(f"Debug: Error parsing value '{specimen_value_str}': {e}")
-            return True
-
-    def evaluate_condition_normalized(self, specimen_value, operator, threshold_value):
-        """
-        Evaluate condition using normalized values (5 significant figures)
-        """
-        try:
-            specimen_val = float(specimen_value)
-            threshold_val = float(threshold_value)
-            
-            print(f"Evaluating: {specimen_val} {operator} {threshold_val}")
-            
-            if operator == '>':
-                result = specimen_val > threshold_val
-            elif operator == '>=':
-                result = specimen_val >= threshold_val
-            elif operator == '<':
-                result = specimen_val < threshold_val
-            elif operator == '<=':
-                result = specimen_val <= threshold_val
-            elif operator == '=':
-                # Use small absolute error for equality
-                result = abs(specimen_val - threshold_val) < 1e-8
-            elif operator == '!=':
-                # Use small absolute error for inequality
-                result = abs(specimen_val - threshold_val) >= 1e-8
-            else:
-                result = True
-            
-            print(f"Result: {result}")
-            return result
-        
-        except (ValueError, TypeError) as e:
-            print(f"Error in evaluation: {e}")
-            return True
-
-    def evaluate_condition(self, specimen_value, operator, threshold_value):
-        """
-        Evaluate condition expression against specimen value
-        """
-        return self.evaluate_condition_normalized(specimen_value, operator, threshold_value)
-
-    def generate_plot_data(self, plot_index, sample_name):
-        """
-        Get cached plot data (for backward compatibility)
-        
-        Args:
-            plot_index (int): Index of the plot (0-based)
-            sample_name (str): Name of the sample
-            
-        Returns:
-            dict: Plot data with x, y values and metadata
-        """
-        # Find the site for this sample
-        site_name = None
-        for site, specimens in self.sites.items():
-            if sample_name in specimens:
-                site_name = site
-                break
-        
-        if site_name is None:
-            # Fallback: generate data directly if not found in cache
-            return self._generate_single_plot_data(plot_index, sample_name, "Unknown")
-        
-        # Get from cache
-        cache_key = f"{site_name}_{sample_name}"
-        if cache_key in self.data_cache:
-            plot_key = f'plot{plot_index + 1}'
-            return self.data_cache[cache_key].get(plot_key, {})
-        
-        # Fallback
-        return self._generate_single_plot_data(plot_index, sample_name, site_name)
-
-    def generate_specimen_data_for_data_box(self, site, specimen):
-        """
-        Get cached specimen data for data box calculations
-        
-        Args:
-            site (str): Site name
-            specimen (str): Specimen name
-            
-        Returns:
-            dict: Complete dataset for all plots of the specimen
-        """
-        cache_key = f"{site}_{specimen}"
-        
-        if cache_key in self.data_cache:
-            return self.data_cache[cache_key]
-        else:
-            print(f"Warning: Data not found in cache for {site} - {specimen}")
-            # Regenerate if not in cache
-            specimen_data = {}
-            for i in range(self.num_plots):
-                plot_key = f'plot{i+1}'
-                specimen_data[plot_key] = self._generate_single_plot_data(i, specimen, site)
-            
-            # Cache it for future use
-            self.data_cache[cache_key] = specimen_data
-            return specimen_data
-
-    def generate_specimen_data_full_range(self, site, specimen):
-        """
-        Get cached specimen data using full data range
-        
-        Args:
-            site (str): Site name
-            specimen (str): Specimen name
-            
-        Returns:
-            dict: Complete dataset for all plots of the specimen using full range
-        """
-        # Same as data_box version since we cache the raw data
-        return self.generate_specimen_data_for_data_box(site, specimen)
-
-    def generate_specimen_data(self, site, specimen):
-        """
-        Get cached specimen data (for backward compatibility)
-        
-        Args:
-            site (str): Site name
-            specimen (str): Specimen name
-            
-        Returns:
-            dict: Complete dataset for all plots of the specimen
-        """
-        return self.generate_specimen_data_full_range(site, specimen)
-
-    def calculate_range_based_averages(self, site, specimen, range_up=100, range_down=1):
-        """
-        Calculate range-based averages based on Range Tab settings
-        
-        Args:
-            site (str): Site name
-            specimen (str): Specimen name
-            range_up (int): Upper range limit
-            range_down (int): Lower range limit
-            
-        Returns:
-            dict: Range-based statistics for all plots
-        """        
-        specimen_data = self.generate_specimen_data_for_data_box(site, specimen)
-        
-        range_averages = {
-            'site': site,
-            'specimen': specimen,
-            'range_up': range_up,
-            'range_down': range_down,
-            'plot_averages': {},
-            'overall_statistics': {}
-        }
-        
-        all_y_values = []
-        
-        for i in range(self.num_plots):
-            plot_key = f'plot{i+1}'
-            if plot_key in specimen_data:
-                data = specimen_data[plot_key]
-                x_values = data['x']
-                
-                if 'y1' in data and 'y2' in data:
-                    # Multi-line data processing
-                    y1_values = data['y1']
-                    y2_values = data['y2']
-                    
-                    range_mask = (x_values >= range_down) & (x_values <= range_up)
-                    
-                    if np.any(range_mask):
-                        y1_range = y1_values[range_mask]
-                        y2_range = y2_values[range_mask]
-                        x_range = x_values[range_mask]
-                        
-                        y1_avg = np.mean(y1_range)
-                        y2_avg = np.mean(y2_range)
-                        combined_avg = np.mean(np.concatenate([y1_range, y2_range]))
-                        
-                        range_averages['plot_averages'][plot_key] = {
-                            'type': 'multi_line',
-                            'x_range_count': len(x_range),
-                            'y1_average': float(y1_avg),
-                            'y2_average': float(y2_avg),
-                            'combined_average': float(combined_avg),
-                            'y1_std': float(np.std(y1_range)),
-                            'y2_std': float(np.std(y2_range)),
-                            'x_range': [float(np.min(x_range)), float(np.max(x_range))]
-                        }
-                        
-                        all_y_values.extend(y1_range)
-                        all_y_values.extend(y2_range)
-                    else:
-                        range_averages['plot_averages'][plot_key] = {
-                            'type': 'multi_line',
-                            'error': 'No data points in specified range'
-                        }
-                else:
-                    # Single-line data processing
-                    y_values = data['y']
-                    
-                    range_mask = (x_values >= range_down) & (x_values <= range_up)
-                    
-                    if np.any(range_mask):
-                        y_range = y_values[range_mask]
-                        x_range = x_values[range_mask]
-                        
-                        y_avg = np.mean(y_range)
-                        y_std = np.std(y_range)
-                        y_min = np.min(y_range)
-                        y_max = np.max(y_range)
-                        y_median = np.median(y_range)
-                        
-                        range_averages['plot_averages'][plot_key] = {
-                            'type': 'single_line',
-                            'x_range_count': len(x_range),
-                            'y_average': float(y_avg),
-                            'y_std': float(y_std),
-                            'y_min': float(y_min),
-                            'y_max': float(y_max),
-                            'y_median': float(y_median),
-                            'x_range': [float(np.min(x_range)), float(np.max(x_range))]
-                        }
-                        
-                        all_y_values.extend(y_range)
-                    else:
-                        range_averages['plot_averages'][plot_key] = {
-                            'type': 'single_line',
-                            'error': 'No data points in specified range'
-                        }
-        
-        # Calculate overall statistics across all plots
-        if all_y_values:
-            all_y_array = np.array(all_y_values)
-            range_averages['overall_statistics'] = {
-                'total_data_points': len(all_y_values),
-                'overall_average': float(np.mean(all_y_array)),
-                'overall_std': float(np.std(all_y_array)),
-                'overall_min': float(np.min(all_y_array)),
-                'overall_max': float(np.max(all_y_array)),
-                'overall_median': float(np.median(all_y_array)),
-                'range_coverage': f"{range_down} to {range_up}",
-                'valid_plots': len([p for p in range_averages['plot_averages'].values() if 'error' not in p])
-            }
-        else:
-            range_averages['overall_statistics'] = {
-                'error': 'No valid data points found in any plot within specified range'
-            }
-        
-        return range_averages
-
-    def get_range_based_specimen_summary(self, site, specimen, range_up=100, range_down=1):
-        """
-        Get range-based specimen summary data - display average values for each parameter
-        """
-        range_averages = self.calculate_range_based_averages(site, specimen, range_up, range_down)
-        
-        summary = {}
-        
-        for i in range(self.num_params):
-            label = self.data_display_labels[i]
-            
-            # Each parameter displays the average value of the corresponding plot
-            plot_index = i  # The i-th parameter displays the average of the (i+1)-th plot
-            if plot_index < self.num_plots:
-                plot_key = f'plot{plot_index + 1}'
-                if (plot_key in range_averages['plot_averages'] and 
-                    'error' not in range_averages['plot_averages'][plot_key]):
-                    
-                    plot_data = range_averages['plot_averages'][plot_key]
-                    
-                    if plot_data['type'] == 'multi_line':
-                        # Multi-line data: display combined average
-                        if 'combined_average' in plot_data:
-                            avg_val = plot_data['combined_average']
-                            formatted_val = self.format_significant_figures(avg_val, 5)
-                            summary[label] = formatted_val
-                        else:
-                            summary[label] = 'N/A'
-                    else:
-                        # Single-line data: display y average
-                        if 'y_average' in plot_data:
-                            avg_val = plot_data['y_average']
-                            formatted_val = self.format_significant_figures(avg_val, 5)
-                            summary[label] = formatted_val
-                        else:
-                            summary[label] = 'N/A'
-                else:
-                    summary[label] = 'N/A'  # No data in range for this plot
-            else:
-                summary[label] = 'N/A'  # Exceeds plot count
-        
-        return summary
-
-    # Data generation methods
     def _generate_sin_data(self, plot_num, sample_name):
         """Generate sine wave data"""
         x = np.linspace(0, 10, 50)
@@ -725,494 +834,415 @@ class TestData:
             'ylabel': 'Y Values'
         }
 
+    # ========== Compatibility Methods for Existing Code ==========
+    
+    def generate_specimen_data_for_data_box(self, site, specimen):
+        """Get specimen data (legacy compatibility)"""
+        sample = self.get_sample(site, specimen)
+        if sample:
+            return sample.get_all_plot_data()
+        return {}
+    
+    def generate_specimen_data(self, site, specimen):
+        """Generate data for a specific specimen"""
+        sample = self.get_sample(site, specimen)
+        if not sample:
+            return {}
+        
+        return sample.get_all_plot_data()
+    
+    def generate_specimen_data_full_range(self, site, specimen):
+        """
+        Generate full range specimen data (same as generate_specimen_data)
+        保持向后兼容性
+        """
+        return self.generate_specimen_data(site, specimen)
+    
+    def calculate_range_based_averages(self, site, specimen, range_up=None, range_down=None):
+        """
+        Calculate range-based averages (uses Sample.calculate_statistics)
+        Uses current range settings if not specified
+        """
+        # Use current range settings if not provided
+        if range_up is None:
+            range_up = self.current_range_up
+        if range_down is None:
+            range_down = self.current_range_down
+        
+        sample = self.get_sample(site, specimen)
+        if not sample:
+            return {}
+        
+        stats = sample.calculate_statistics(range_up, range_down)
+        
+        # Convert to legacy format
+        range_averages = {
+            'site': site,
+            'specimen': specimen,
+            'range_up': range_up,
+            'range_down': range_down,
+            'plot_averages': {},
+            'overall_statistics': stats.get('overall', {})
+        }
+        
+        # Convert plot stats to legacy format
+        for plot_key, plot_stats in stats.get('plot_stats', {}).items():
+            range_averages['plot_averages'][plot_key] = plot_stats
+        
+        return range_averages
+    
+    def get_range_based_specimen_summary(self, site, specimen, range_up=None, range_down=None):
+        """
+        Get range-based specimen summary
+        Uses current range settings if not specified
+        """
+        range_averages = self.calculate_range_based_averages(site, specimen, range_up, range_down)
+        
+        summary = {}
+        
+        for i in range(self.num_params):
+            label = self.data_display_labels[i]
+            
+            plot_index = i
+            if plot_index < self.num_plots:
+                plot_key = f'plot{plot_index + 1}'
+                if plot_key in range_averages.get('plot_averages', {}):
+                    plot_data = range_averages['plot_averages'][plot_key]
+                    
+                    if 'average' in plot_data:
+                        avg_val = plot_data['average']
+                        formatted_val = self.format_significant_figures(avg_val, 5)
+                        summary[label] = formatted_val
+                    else:
+                        summary[label] = 'N/A'
+                else:
+                    summary[label] = 'N/A'
+            else:
+                summary[label] = 'N/A'
+        
+        return summary
+    
+    # ========== Methods using external functions from data_utils ==========
+    
+    def check_parameter_condition_independently(self, site, specimen, parameter_index, 
+                                               condition_str, range_up=100, range_down=1):
+        """
+        Check if a parameter meets the condition independently
+        Uses external function from data_utils
+        
+        Args:
+            site (str): Site name
+            specimen (str): Specimen name
+            parameter_index (int): Parameter index
+            condition_str (str): Condition string (e.g., ">10", "<=5.5")
+            range_up (int): Range upper limit
+            range_down (int): Range lower limit
+            
+        Returns:
+            bool: Whether condition is met
+        """
+        from data_utils import check_parameter_condition_independently
+        
+        result = check_parameter_condition_independently(
+            self, site, specimen, parameter_index, condition_str, range_up, range_down
+        )
+        
+        # Store filter state and result
+        if site not in self.filter_states:
+            self.filter_states[site] = {}
+        if specimen not in self.filter_states[site]:
+            self.filter_states[site][specimen] = {}
+        self.filter_states[site][specimen][parameter_index] = condition_str
+        
+        if site not in self.filter_results:
+            self.filter_results[site] = {}
+        if specimen not in self.filter_results[site]:
+            self.filter_results[site][specimen] = {}
+        self.filter_results[site][specimen][parameter_index] = result
+        
+        return result
+    
     def generate_single_site_plot_data(self, site_name, selected_items, range_up=100, range_down=1):
         """
-        Generate plot data for single site preview with 1sigma error calculation
+        Generate plot data for single site preview
+        Uses external function from data_utils
         
         Args:
             site_name (str): Site name
-            selected_items (list): List of selected items from selection tab
-            range_up (int): Upper range limit
-            range_down (int): Lower range limit
+            selected_items (list): Selected items list
+            range_up (int): Range upper limit
+            range_down (int): Range lower limit
             
         Returns:
-            dict: Plot data for preview with mean and 1sigma values
+            dict: Plot data
         """
-        if not site_name or site_name == "Select a site...":
-            return {}
+        from data_utils import generate_single_site_plot_data
         
-        # Parse selected items - handle both string and dict formats
-        site_specimens = []
-        for item in selected_items:
-            if isinstance(item, str):
-                # Handle string format like "Site A → Sample A1"
-                if ' → ' in item:
-                    parts = item.split(' → ')
-                    if len(parts) == 2:
-                        item_site, item_specimen = parts[0].strip(), parts[1].strip()
-                        if item_site == site_name:
-                            site_specimens.append(item_specimen)
-            elif isinstance(item, dict):
-                # Handle dict format (for backward compatibility)
-                if item.get('site') == site_name:
-                    site_specimens.append(item.get('specimen'))
+        plot_data = generate_single_site_plot_data(self, site_name, selected_items, range_up, range_down)
         
-        if not site_specimens:
-            # If no specific specimens selected, use all specimens from this site
-            if site_name in self.sites:
-                site_specimens = self.sites[site_name]
-            else:
-                return {}
-        
-        # Calculate statistics for all specimens in this site
-        all_specimen_values = []
-        specimen_data_list = []
-        
-        # Calculate averages for each specimen using range settings
-        for specimen in site_specimens:
-            specimen_summary = self.get_range_based_specimen_summary(site_name, specimen, range_up, range_down)
-            
-            # Convert summary to numerical values for plotting
-            specimen_data = {'specimen': specimen, 'values': []}
-            for i, label in enumerate(self.data_display_labels):
-                if i < self.num_params:
-                    value_str = specimen_summary.get(label, 'N/A')
-                    if value_str != 'N/A':
-                        try:
-                            value = self.parse_formatted_value(value_str)
-                            specimen_data['values'].append(value)
-                        except:
-                            specimen_data['values'].append(0.0)
-                    else:
-                        specimen_data['values'].append(0.0)
-        
-            specimen_data_list.append(specimen_data)  # 修复：在循环内添加
-        
-            # Collect values for statistics calculation
-            if specimen_data['values']:
-                all_specimen_values.append(specimen_data['values'])
-        
-        # Calculate mean and 1sigma for each parameter across all specimens
-        parameter_stats = []
-        if all_specimen_values:
-            max_params = min(self.num_params, len(all_specimen_values[0]) if all_specimen_values else 0)
-            
-            for param_idx in range(max_params):
-                param_values = []
-                for specimen_values in all_specimen_values:
-                    if param_idx < len(specimen_values):
-                        param_values.append(specimen_values[param_idx])
-                
-                if param_values:
-                    mean_val = np.mean(param_values)
-                    std_val = np.std(param_values)  # 1sigma
-                    parameter_stats.append({
-                        'mean': mean_val,
-                        'std': std_val,
-                        'upper_1sigma': mean_val + std_val,
-                        'lower_1sigma': mean_val - std_val,
-                        'count': len(param_values)
-                    })
-                else:
-                    parameter_stats.append({
-                        'mean': 0.0,
-                        'std': 0.0,
-                        'upper_1sigma': 0.0,
-                        'lower_1sigma': 0.0,
-                        'count': 0
-                    })
-        
-        # Generate combined plot data for all specimens in this site
-        plot_data = {
-            'site': site_name,
-            'specimens': site_specimens,
-            'range_up': range_up,
-            'range_down': range_down,
-            'plot_averages': specimen_data_list,  # Individual specimen data
-            'parameter_stats': parameter_stats,   # Mean and 1sigma statistics
-            'specimen_count': len(site_specimens)
-        }
+        # Cache plot data
+        cache_key = f"{site_name}_{range_up}_{range_down}"
+        if site_name not in self.plot_data_cache:
+            self.plot_data_cache[site_name] = {}
+        self.plot_data_cache[site_name][cache_key] = plot_data
         
         return plot_data
-
+    
     def generate_all_sites_plot_data(self, selected_items, range_up=100, range_down=1):
         """
-        Generate plot data for all sites preview with 1sigma error calculation
-
+        Generate plot data for all sites preview
+        Uses external function from data_utils
+        
         Args:
-            selected_items (list): List of selected items from selection tab
-            range_up (int): Upper range limit
-            range_down (int): Lower range limit
+            selected_items (list): Selected items list
+            range_up (int): Range upper limit
+            range_down (int): Range lower limit
             
         Returns:
-            dict: Plot data for all sites preview with mean and 1sigma values
+            dict: Plot data
         """
-        plot_data = {
-            'range_up': range_up,
-            'range_down': range_down,
-            'sites_data': {},
-            'global_stats': {}
-        }
+        from data_utils import generate_all_sites_plot_data
         
-        # Parse selected items - handle both string and dict formats
-        sites_specimens = {}
-        for item in selected_items:
-            if isinstance(item, str):
-                # Handle string format like "Site A → Sample A1"
-                if ' → ' in item:
-                    parts = item.split(' → ')
-                    if len(parts) == 2:
-                        site, specimen = parts[0].strip(), parts[1].strip()
-                        if site not in sites_specimens:
-                            sites_specimens[site] = []
-                        sites_specimens[site].append(specimen)
-            elif isinstance(item, dict):
-                # Handle dict format (for backward compatibility)
-                site = item.get('site')
-                specimen = item.get('specimen')
-                if site and specimen:
-                    if site not in sites_specimens:
-                        sites_specimens[site] = []
-                    sites_specimens[site].append(specimen)
-
-        # If no specific selection, use all data
-        if not sites_specimens:
-            sites_specimens = self.sites.copy()
+        plot_data = generate_all_sites_plot_data(self, selected_items, range_up, range_down)
         
-        # Collect all site averages for global statistics
-        all_site_averages = []
-        
-        # Generate data for each site
-        for site_name, specimens in sites_specimens.items():
-            site_specimen_values = []
-            site_data = []
-            
-            for specimen in specimens:
-                specimen_summary = self.get_range_based_specimen_summary(site_name, specimen, range_up, range_down)
-                
-                # Convert summary to numerical values
-                specimen_values = {'specimen': specimen, 'values': []}
-                for i, label in enumerate(self.data_display_labels):
-                    if i < self.num_params:
-                        value_str = specimen_summary.get(label, 'N/A')
-                        if value_str != 'N/A':
-                            try:
-                                value = self.parse_formatted_value(value_str)
-                                specimen_values['values'].append(value)
-                            except:
-                                specimen_values['values'].append(0.0)
-                        else:
-                            specimen_values['values'].append(0.0)
-                
-                site_data.append(specimen_values)
-                if specimen_values['values']:
-                    site_specimen_values.append(specimen_values['values'])
-            
-            # Calculate site-level statistics
-            site_stats = []
-            site_averages = []
-            if site_specimen_values:
-                max_params = min(self.num_params, len(site_specimen_values[0]) if site_specimen_values else 0)
-                
-                for param_idx in range(max_params):
-                    param_values = []
-                    for specimen_values in site_specimen_values:
-                        if param_idx < len(specimen_values):
-                            param_values.append(specimen_values[param_idx])
-                    
-                    if param_values:
-                        mean_val = np.mean(param_values)
-                        std_val = np.std(param_values)
-                        site_stats.append({
-                            'mean': mean_val,
-                            'std': std_val,
-                            'upper_1sigma': mean_val + std_val,
-                            'lower_1sigma': mean_val - std_val,
-                            'count': len(param_values)
-                        })
-                        site_averages.append(mean_val)
-                    else:
-                        site_stats.append({
-                            'mean': 0.0,
-                            'std': 0.0,
-                            'upper_1sigma': 0.0,
-                            'lower_1sigma': 0.0,
-                            'count': 0
-                        })
-                        site_averages.append(0.0)
-            
-            plot_data['sites_data'][site_name] = {
-                'specimens': site_data,
-                'site_stats': site_stats,
-                'site_averages': site_averages,
-                'specimen_count': len(specimens)
-            }
-            
-            # Collect for global statistics
-            if site_averages:
-                all_site_averages.append(site_averages)
-        
-        # Calculate global statistics across all sites
-        if all_site_averages:
-            global_stats = []
-            max_params = min(self.num_params, len(all_site_averages[0]) if all_site_averages else 0)
-            
-            for param_idx in range(max_params):
-                param_values = []
-                for site_averages in all_site_averages:
-                    if param_idx < len(site_averages):
-                        param_values.append(site_averages[param_idx])
-                
-                if param_values:
-                    global_mean = np.mean(param_values)
-                    global_std = np.std(param_values)
-                    global_stats.append({
-                        'mean': global_mean,
-                        'std': global_std,
-                        'upper_1sigma': global_mean + global_std,
-                        'lower_1sigma': global_mean - global_std,
-                        'count': len(param_values)
-                    })
-                else:
-                    global_stats.append({
-                        'mean': 0.0,
-                        'std': 0.0,
-                        'upper_1sigma': 0.0,
-                        'lower_1sigma': 0.0,
-                        'count': 0
-                    })
-            
-            plot_data['global_stats'] = global_stats
+        # Cache plot data
+        cache_key = f"all_sites_{range_up}_{range_down}"
+        self.plot_data_cache[cache_key] = plot_data
         
         return plot_data
-
+    
     def plot_selection_preview_data(self, canvas, plot_data):
         """
         Plot selection preview data on canvas
+        Uses external function from data_utils
         
         Args:
-            canvas: Matplotlib canvas to plot on
-            plot_data (dict): Plot data to visualize
+            canvas: MplCanvas instance
+            plot_data (dict): Plot data dictionary
         """
-        try:
-            canvas.ax.clear()
-            
-            if not plot_data:
-                canvas.ax.set_title('No data available')
-                canvas.ax.text(0.5, 0.5, 'No data to display', 
-                              ha='center', va='center', transform=canvas.ax.transAxes,
-                              fontsize=10, color='gray')
-                canvas.draw()
-                return
-            
-            # Check if this is single site or all sites data
-            if 'specimens' in plot_data:
-                # Single site preview
-                self._plot_single_site_preview(canvas, plot_data)
-            elif 'sites_data' in plot_data:
-                # All sites preview
-                self._plot_all_sites_preview(canvas, plot_data)
-            else:
-                canvas.ax.set_title('Invalid data format')
-                canvas.ax.text(0.5, 0.5, 'Invalid data format', 
-                              ha='center', va='center', transform=canvas.ax.transAxes,
-                              fontsize=10, color='red')
-            
-            canvas.draw()
-            
-        except Exception as e:
-            canvas.ax.clear()
-            canvas.ax.set_title('Error plotting data')
-            canvas.ax.text(0.5, 0.5, f'Error: {str(e)}', 
-                          ha='center', va='center', transform=canvas.ax.transAxes,
-                          fontsize=10, color='red')
-            canvas.draw()
-
-    def _plot_single_site_preview(self, canvas, plot_data):
-        """Single Site Preview: specimen均值+1σ误差棒，选中为实心，未选中为空心，选中均值/1σ横线"""
-        site_name = plot_data.get('site', 'Unknown Site')
-        all_specimens = self.sites.get(site_name, [])
-
-        # 选中specimen
-        selected_items = getattr(self, 'selection_tab', None).get_selected_items() if hasattr(self, 'selection_tab') else []
-        selected_specimens = set()
-        for item in selected_items:
-            if isinstance(item, str) and ' → ' in item:
-                parts = item.split(' → ')
-                if len(parts) == 2 and parts[0].strip() == site_name:
-                    selected_specimens.add(parts[1].strip())
-
-        specimen_names = []
-        averages = []
-        stds = []
-        is_selected = []
-
-        for specimen in all_specimens:
-            summary = self.get_range_based_specimen_summary(site_name, specimen,
-                                                            plot_data.get('range_up', 100),
-                                                            plot_data.get('range_down', 1))
-            values = []
-            for idx, label in enumerate(self.data_display_labels):
-                if idx < self.num_params:
-                    val_str = summary.get(label, 'N/A')
-                    if val_str != 'N/A':
-                        try:
-                            val = self.parse_formatted_value(val_str)
-                            values.append(val)
-                        except:
-                            values.append(0.0)
-            if not values:
-                continue
-            specimen_names.append(specimen)
-            avg = np.mean(values)
-            std = np.std(values) if len(values) > 1 else 0.0
-            averages.append(avg)
-            stds.append(std)
-            is_selected.append(specimen in selected_specimens)
-
-        if not specimen_names:
-            canvas.ax.set_title(f'{site_name} - No valid data')
-            canvas.ax.text(0.5, 0.5, 'No valid data available',
-                           ha='center', va='center', transform=canvas.ax.transAxes,
-                           fontsize=10, color='gray')
-            return
-
-        x_positions = np.arange(len(specimen_names))
-        for i, (avg, std, sel) in enumerate(zip(averages, stds, is_selected)):
-            if sel:
-                canvas.ax.errorbar(i, avg, yerr=std, fmt='o', color='blue',
-                                   markersize=8, capsize=5, capthick=2, alpha=0.9)
-            else:
-                canvas.ax.errorbar(i, avg, yerr=std, fmt='o', color='white',
-                                   markeredgecolor='blue', markeredgewidth=2, markersize=8,
-                                   capsize=5, capthick=2, alpha=0.7)
-
-        # 只用选中的 specimen 计算均值和1σ
-        selected_vals = [avg for avg, sel in zip(averages, is_selected) if sel]
-        if selected_vals:
-            mean_sel = np.mean(selected_vals)
-            std_sel = np.std(selected_vals)
-            canvas.ax.axhline(y=mean_sel, color='red', linestyle='-', linewidth=2, alpha=0.8, label='Selected Mean')
-            canvas.ax.axhline(y=mean_sel + std_sel, color='red', linestyle='--', linewidth=1.5, alpha=0.6, label='+1σ')
-            canvas.ax.axhline(y=mean_sel - std_sel, color='red', linestyle='--', linewidth=1.5, alpha=0.6, label='-1σ')
-
-        canvas.ax.set_xlabel('Specimens')
-        canvas.ax.set_ylabel('Parameter Average')
-        canvas.ax.set_title(f'{site_name} - All Specimens with 1σ Error Bars')
-        canvas.ax.set_xticks(x_positions)
-        canvas.ax.set_xticklabels(specimen_names, rotation=45, ha='right')
-        canvas.ax.grid(True, alpha=0.3)
-        canvas.ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-
-    def _plot_all_sites_preview(self, canvas, plot_data):
-        """All Site Preview: site均值+1σ误差棒，选中为实心，未选中为空心，选中均值/1σ横线"""
+        from data_utils import plot_selection_preview_data
         
-        all_sites = list(self.sites.keys())
-        if not all_sites:
-            canvas.ax.set_title('All Sites - No sites available')
-            canvas.ax.text(0.5, 0.5, 'No sites available',
-                           ha='center', va='center', transform=canvas.ax.transAxes,
-                           fontsize=10, color='gray')
-            return
-
-        selected_items = getattr(self, 'selection_tab', None).get_selected_items() if hasattr(self, 'selection_tab') else []
-        selected_sites = set()
-        for item in selected_items:
-            if isinstance(item, str) and ' → ' in item:
-                parts = item.split(' → ')
-                if len(parts) == 2:
-                    selected_sites.add(parts[0].strip())
-
-        site_names = []
-        site_averages = []
-        site_stds = []
-        site_selected = []
-
-        range_up = plot_data.get('range_up', 100)
-        range_down = plot_data.get('range_down', 1)
-        for site_name in all_sites:
-            specimens = self.sites[site_name]
-            specimen_vals = []
-            for specimen in specimens:
-                summary = self.get_range_based_specimen_summary(site_name, specimen, range_up, range_down)
-                vals = []
-                for idx, label in enumerate(self.data_display_labels):
-                    if idx < self.num_params:
-                        val_str = summary.get(label, 'N/A')
-                        if val_str != 'N/A':
-                            try:
-                                val = self.parse_formatted_value(val_str)
-                                vals.append(val)
-                            except:
-                                vals.append(0.0)
-                if vals:
-                    specimen_vals.append(np.mean(vals))
-
-            if specimen_vals:
-                site_avg = np.mean(specimen_vals)
-                site_std = np.std(specimen_vals) if len(specimen_vals) > 1 else 0.0
-                site_names.append(site_name)
-                site_averages.append(site_avg)
-                site_stds.append(site_std)
-                site_selected.append(site_name in selected_sites)
-
-        if not site_names:
-            canvas.ax.set_title('All Sites - No valid data')
-            canvas.ax.text(0.5, 0.5, 'No valid data available',
-                           ha='center', va='center', transform=canvas.ax.transAxes,
-                           fontsize=10, color='gray')
-            return
-
-        x_positions = np.arange(len(site_names))
-        for i, (avg, std, sel) in enumerate(zip(site_averages, site_stds, site_selected)):
-            if sel:
-                canvas.ax.errorbar(i, avg, yerr=std, fmt='s', color='green',
-                                   markersize=10, capsize=5, capthick=2, alpha=0.9)
-            else:
-                canvas.ax.errorbar(i, avg, yerr=std, fmt='s', color='white',
-                                   markeredgecolor='green', markeredgewidth=2, markersize=10,
-                                   capsize=5, capthick=2, alpha=0.7)
-
-        # 只用选中的site计算均值和1σ
-        selected_vals = [avg for avg, sel in zip(site_averages, site_selected) if sel]
-        if selected_vals:
-            mean_selected = np.mean(selected_vals)
-            std_selected = np.std(selected_vals)
-            canvas.ax.axhline(y=mean_selected, color='red', linestyle='-', linewidth=2, alpha=0.8, label='Selected Mean')
-            canvas.ax.axhline(y=mean_selected + std_selected, color='red', linestyle='--', linewidth=1.5, alpha=0.6, label='+1σ')
-            canvas.ax.axhline(y=mean_selected - std_selected, color='red', linestyle='--', linewidth=1.5, alpha=0.6, label='-1σ')
-
-        canvas.ax.set_xlabel('Sites')
-        canvas.ax.set_ylabel('Site Average')
-        canvas.ax.set_title('All Sites - All Sites with 1σ Error Bars')
-        canvas.ax.set_xticks(x_positions)
-        canvas.ax.set_xticklabels(site_names, rotation=45, ha='right')
-        canvas.ax.grid(True, alpha=0.3)
-        canvas.ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        plot_selection_preview_data(canvas, plot_data)
+    
+    def get_filter_state(self, site, specimen, parameter_index=None):
+        """
+        Get filter state for a specimen
         
+        Args:
+            site (str): Site name
+            specimen (str): Specimen name
+            parameter_index (int, optional): Specific parameter index
+            
+        Returns:
+            dict or str: Filter state(s)
+        """
+        if site not in self.filter_states:
+            return {} if parameter_index is None else ""
+        if specimen not in self.filter_states[site]:
+            return {} if parameter_index is None else ""
+        
+        if parameter_index is None:
+            return self.filter_states[site][specimen]
+        else:
+            return self.filter_states[site][specimen].get(parameter_index, "")
+    
+    def get_filter_result(self, site, specimen, parameter_index=None):
+        """
+        Get filter result for a specimen
+        
+        Args:
+            site (str): Site name
+            specimen (str): Specimen name
+            parameter_index (int, optional): Specific parameter index
+            
+        Returns:
+            dict or bool: Filter result(s)
+        """
+        if site not in self.filter_results:
+            return {} if parameter_index is None else True
+        if specimen not in self.filter_results[site]:
+            return {} if parameter_index is None else True
+        
+        if parameter_index is None:
+            return self.filter_results[site][specimen]
+        else:
+            return self.filter_results[site][specimen].get(parameter_index, True)
+    
+    def clear_filter_cache(self, site=None, specimen=None):
+        """
+        Clear filter cache
+        
+        Args:
+            site (str, optional): Specific site to clear, None for all
+            specimen (str, optional): Specific specimen to clear
+        """
+        if site is None:
+            self.filter_states.clear()
+            self.filter_results.clear()
+        elif specimen is None:
+            if site in self.filter_states:
+                del self.filter_states[site]
+            if site in self.filter_results:
+                del self.filter_results[site]
+        else:
+            if site in self.filter_states and specimen in self.filter_states[site]:
+                del self.filter_states[site][specimen]
+            if site in self.filter_results and specimen in self.filter_results[site]:
+                del self.filter_results[site][specimen]
+    
+    def clear_calculation_cache(self, site=None, specimen=None):
+        """
+        Clear calculation cache
+        
+        Args:
+            site (str, optional): Specific site to clear, None for all
+            specimen (str, optional): Specific specimen to clear
+        """
+        if site is None:
+            self.calculation_cache.clear()
+        elif specimen is None:
+            if site in self.calculation_cache:
+                del self.calculation_cache[site]
+        else:
+            if site in self.calculation_cache and specimen in self.calculation_cache[site]:
+                del self.calculation_cache[site][specimen]
+    
+    def parse_filter_expression(self, expression):
+        """
+        Parse and validate filter expression
+        使用data_utils中的函数来验证表达式
+        
+        Args:
+            expression (str): Filter expression (e.g., ">10", "<=5.5")
+            
+        Returns:
+            dict or None: Parsed expression or None if invalid
+        """
+        from data_utils import check_parameter_condition
+        
+        if not expression or not expression.strip():
+            return None
+        
+        # Try to parse the expression
+        import re
+        match = re.match(r'\s*(>=|<=|!=|>|<|=)\s*(-?\d+(?:\.\d+)?)\s*', expression.strip())
+        if not match:
+            return None
+        
+        return {
+            'operator': match.group(1),
+            'value': float(match.group(2)),
+            'expression': expression.strip()
+        }
+    
+    # ========== Range and Selection State Management ==========
+    
+    def set_range(self, range_up, range_down):
+        """
+        Set current range and store in history
+        
+        Args:
+            range_up (int): Range upper limit
+            range_down (int): Range lower limit
+        """
+        # Store in history
+        import time
+        self.range_history.append((range_up, range_down, time.time()))
+        
+        # Update current range
+        self.current_range_up = range_up
+        self.current_range_down = range_down
+        
+        # Clear caches that depend on range
+        self.clear_calculation_cache()
+        self.clear_plot_data_cache()
+        
+        print(f"Range updated: {range_down} - {range_up}")
+    
+    def get_current_range(self):
+        """Get current range settings"""
+        return {
+            'range_up': self.current_range_up,
+            'range_down': self.current_range_down
+        }
+    
+    def set_current_selection(self, site, specimen):
+        """
+        Set current site and specimen selection
+        
+        Args:
+            site (str): Site name
+            specimen (str): Specimen name
+        """
+        # Store in history
+        import time
+        self.selection_history.append((site, specimen, time.time()))
+        
+        # Update current selection
+        self.current_site = site
+        self.current_specimen = specimen
+        
+        print(f"Selection updated: {site} -> {specimen}")
+    
+    def get_current_selection(self):
+        """Get current selection"""
+        return {
+            'site': self.current_site,
+            'specimen': self.current_specimen
+        }
+    
+    def add_selected_sample(self, site, specimen):
+        """
+        Add a sample to the selection set
+        
+        Args:
+            site (str): Site name
+            specimen (str): Specimen name
+        """
+        self.selected_samples.add((site, specimen))
+    
+    def remove_selected_sample(self, site, specimen):
+        """
+        Remove a sample from the selection set
+        
+        Args:
+            site (str): Site name
+            specimen (str): Specimen name
+        """
+        self.selected_samples.discard((site, specimen))
+    
+    def clear_selected_samples(self):
+        """Clear all selected samples"""
+        self.selected_samples.clear()
+    
+    def get_selected_samples(self):
+        """Get list of selected samples"""
+        return [{'site': site, 'specimen': specimen} for site, specimen in self.selected_samples]
+    
+    def is_sample_selected(self, site, specimen):
+        """Check if a sample is selected"""
+        return (site, specimen) in self.selected_samples
+    
+    def clear_plot_data_cache(self):
+        """Clear plot data cache"""
+        self.plot_data_cache.clear()
+        self.selection_plot_data.clear()
+
 
 def launch_test_app():
     """Launch test application with predefined settings"""
-    # Application configuration
     NUM_PLOTS = 8      
     NUM_PARAMS = 6     
     
-    # Custom parameter labels for data display
     CUSTOM_LABELS = [
-        "Plot1 Avg",      # Previously "Overall Avg"
-        "Plot2 Avg",      # Previously "Overall Std"  
-        "Plot3 Avg",      # Previously "Data Points"
-        "Plot4 Avg",      # Previously "Valid Plots"
-        "Plot5 Avg",      # Previously "Range Setting"
-        "Plot6 Avg"       # Previously "Plot1 Avg"
+        "Plot1 Avg", "Plot2 Avg", "Plot3 Avg",
+        "Plot4 Avg", "Plot5 Avg", "Plot6 Avg"
     ]
     
     from main_window import MainWindow
     from app_manager import TestAppManager
     
     app = QApplication(sys.argv)
-    
-    # Set application icon
     app.setWindowIcon(QIcon('icon.png'))
     
     test_manager = TestAppManager()
@@ -1222,11 +1252,11 @@ def launch_test_app():
         custom_param_labels=CUSTOM_LABELS
     )
     
-    # Verify cache status
+    # Verify structure
     if hasattr(window, 'data_tab') and hasattr(window.data_tab, 'test_data_generator'):
         test_data = window.data_tab.test_data_generator
         cache_info = test_data.get_cache_info()
-        print(f"Cache Info: {cache_info}")
+        print(f"Data Structure: {cache_info}")
     
     window.show()
     sys.exit(app.exec())

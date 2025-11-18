@@ -36,7 +36,7 @@ class MenuManager:
         open_folder_action.triggered.connect(self.open_folder)
         file_menu.addAction(open_folder_action)
         
-        # Open File action
+        # Open File action (merged with Import Data functionality)
         open_file_action = QAction("Open File", self.main_window)
         open_file_action.triggered.connect(self.open_file)
         file_menu.addAction(open_file_action)
@@ -288,19 +288,80 @@ class MenuManager:
             self.main_window.load_data()
 
     def open_file(self):
-        """Open file selection dialog"""
+        """Open file selection dialog - merged with Import Data functionality"""
+        import pandas as pd
+        import os
+        
+        # Supported file formats
+        file_filter = "Data Files (*.xlsx *.xls *.csv *.txt *.dat);;Excel Files (*.xlsx *.xls);;CSV Files (*.csv);;Text Files (*.txt *.dat);;All Files (*)"
+        
         file_path, _ = QFileDialog.getOpenFileName(
             self.main_window,
-            "Select Data File",
+            "Open Data File",
             "",
-            "All Files (*);;Text Files (*.txt);;Data Files (*.dat)"
+            file_filter
         )
         
-        if file_path:
+        if not file_path:
+            return
+            
+        try:
+            # Determine file type and read accordingly
+            file_ext = os.path.splitext(file_path)[1].lower()
+            
+            if file_ext in ['.xlsx', '.xls']:
+                # Excel file
+                df = pd.read_excel(file_path)
+            elif file_ext == '.csv':
+                # CSV file - try different encodings
+                try:
+                    df = pd.read_csv(file_path, encoding='utf-8')
+                except UnicodeDecodeError:
+                    try:
+                        df = pd.read_csv(file_path, encoding='gbk')
+                    except UnicodeDecodeError:
+                        df = pd.read_csv(file_path, encoding='latin-1')
+            elif file_ext in ['.txt', '.dat']:
+                # Text file - try tab or comma delimiter
+                try:
+                    df = pd.read_csv(file_path, sep='\t', encoding='utf-8')
+                except:
+                    try:
+                        df = pd.read_csv(file_path, sep=',', encoding='utf-8')
+                    except UnicodeDecodeError:
+                        try:
+                            df = pd.read_csv(file_path, sep='\t', encoding='gbk')
+                        except:
+                            df = pd.read_csv(file_path, sep=',', encoding='gbk')
+            else:
+                raise ValueError(f"Unsupported file format: {file_ext}")
+            
+            # Store imported data
+            self.main_window.imported_data = df
+            self.main_window.imported_file_path = file_path
             self.main_window.current_file = file_path
             self.main_window.current_folder = ""
+            
+            # Enable toolbar actions
+            if hasattr(self.main_window, 'data_view_action'):
+                self.main_window.data_view_action.setEnabled(True)
+            if hasattr(self.main_window, 'map_data_action'):
+                self.main_window.map_data_action.setEnabled(True)
+            
+            # Update status
             self.main_window.update_status_display()
-            self.main_window.load_data()
+            self.main_window.statusBar().showMessage(
+                f"Successfully imported {len(df)} rows from {os.path.basename(file_path)}", 
+                3000
+            )
+            
+        except Exception as e:
+            QMessageBox.warning(
+                self.main_window,
+                "Import Error",
+                f"Error importing file: {str(e)}"
+            )
+            self.main_window.statusBar().showMessage(f"Error importing file: {str(e)}", 5000)
 
     def load_redo_file(self):
         """Load .redo file dialog"""

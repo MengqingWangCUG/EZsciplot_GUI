@@ -43,6 +43,8 @@ class MplCanvas(FigureCanvas):
         
         # Set tight layout for the figure
         self.fig.tight_layout()
+    
+
 
     def setFixedAspectRatio(self, fixed=True):
         """

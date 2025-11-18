@@ -319,17 +319,18 @@ class PreviewManager:
         """Get current range settings"""
         range_up = 100
         range_down = 1
-        if hasattr(self.main_window, 'data_tab'):
-            if hasattr(self.main_window.data_tab, 'range_up_combo'):
-                try:
-                    range_up = int(self.main_window.data_tab.range_up_combo.currentText())
-                    range_down = int(self.main_window.data_tab.range_down_combo.currentText())
-                except:
-                    pass
+        data_tab = getattr(self.main_window, 'data_tab', None)
+        if data_tab and hasattr(data_tab, 'get_current_range_values'):
+            range_up, range_down = data_tab.get_current_range_values()
+        if range_down > range_up:
+            range_down, range_up = range_up, range_down
         return range_up, range_down
 
     def update_single_site_preview(self, site_name):
         """Update Single Site Preview using current range settings for data box compatibility"""
+        if not hasattr(self, 'single_site_canvas'):
+            return
+            
         if site_name == "Select a site..." or not site_name:
             self.single_site_canvas.ax.clear()
             self.single_site_canvas.ax.set_title('Single Site Preview - Select a site')
@@ -355,6 +356,9 @@ class PreviewManager:
 
     def update_all_site_preview(self):
         """Update All Site Preview using current range settings for data box compatibility"""
+        if not hasattr(self, 'all_site_canvas'):
+            return
+            
         if not hasattr(self.main_window, 'data_tab') or not hasattr(self.main_window.data_tab, 'test_data_generator'):
             return
         
@@ -373,9 +377,10 @@ class PreviewManager:
     def update_selection_preview(self):
         """Update selection preview - replacement for the original update_selection_plot"""
         # Update Single Site Preview
-        current_site = self.site_preview_combo.currentText()
-        if current_site != "Select a site...":
-            self.update_single_site_preview(current_site)
+        if hasattr(self, 'site_preview_combo'):
+            current_site = self.site_preview_combo.currentText()
+            if current_site != "Select a site...":
+                self.update_single_site_preview(current_site)
         
         # Update All Site Preview
         self.update_all_site_preview()

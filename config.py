@@ -5,7 +5,9 @@ Layout Configuration Module - Centralized management of all UI layout parameters
 
 class LayoutConfig:
     """Layout configuration class - Centralized management of all UI layout parameters"""
-    
+
+    DEFAULT_THEME = 'light'
+
     # Main window configuration
     MAIN_WINDOW = {
         'title': 'Specimen Viewer',
@@ -128,30 +130,67 @@ class LayoutConfig:
     
     # Main window style configuration - migrated from main_window.py
     MAIN_WINDOW_STYLES = {
-        'main_window': {
-            'background_color': '#f5f5f5',
-            'color': '#000000'
+        'light': {
+            'main_window': {
+                'background_color': '#f5f5f5',
+                'color': '#000000'
+            },
+            'widget': {
+                'background_color': '#f5f5f5',
+                'color': '#000000',
+                'font_family': '"Segoe UI", Arial, sans-serif'
+            },
+            'tab_widget': {
+                'widget_border': 'none',
+                'widget_background': 'transparent',
+                'pane_border': 'none',
+                'pane_background': 'transparent',
+                'pane_margin_top': '0px',
+                'tab_bar_alignment': 'left',
+                'tab_border': '1px solid #cccccc',
+                'tab_padding': '8px 16px',
+                'tab_margin_right': '2px',
+                'tab_margin_bottom': '-1px',
+                'tab_background': '#f0f0f0',
+                'tab_border_bottom': '1px solid #cccccc',
+                'tab_selected_border_bottom': '1px solid #ffffff',
+                'tab_selected_background': '#ffffff',
+                'tab_selected_margin_bottom': '-1px',
+                'tab_hover_background': '#e8e8e8',
+                'tab_radius': '5px',
+                'tab_min_width': '100px'
+            }
         },
-        'widget': {
-            'background_color': '#f5f5f5',
-            'color': '#000000',
-            'font_family': '"Segoe UI", Arial, sans-serif'
-        },
-        'tab_widget': {
-            'pane_border': '2px solid #333333',
-            'pane_background': '#ffffff',
-            'pane_margin_top': '-1px',
-            'tab_bar_alignment': 'left',
-            'tab_border': '1px solid #333333',
-            'tab_padding': '8px 16px',
-            'tab_margin_right': '2px',
-            'tab_margin_bottom': '1px',
-            'tab_background': '#f0f0f0',
-            'tab_border_bottom': '1px solid #333333',
-            'tab_selected_border_bottom': '1px solid #ffffff',
-            'tab_selected_background': '#ffffff',
-            'tab_selected_margin_bottom': '0px',
-            'tab_hover_background': '#e6e6e6'
+        'dark': {
+            'main_window': {
+                'background_color': '#1e1e1e',
+                'color': '#f0f0f0'
+            },
+            'widget': {
+                'background_color': '#252526',
+                'color': '#f0f0f0',
+                'font_family': '"Segoe UI", Arial, sans-serif'
+            },
+            'tab_widget': {
+                'widget_border': 'none',
+                'widget_background': 'transparent',
+                'pane_border': '1px solid #3c3c3c',
+                'pane_background': '#2d2d2d',
+                'pane_margin_top': '0px',
+                'tab_bar_alignment': 'left',
+                'tab_border': '1px solid #3c3c3c',
+                'tab_padding': '8px 16px',
+                'tab_margin_right': '2px',
+                'tab_margin_bottom': '-1px',
+                'tab_background': '#333333',
+                'tab_border_bottom': '1px solid #3c3c3c',
+                'tab_selected_border_bottom': '1px solid #2d2d2d',
+                'tab_selected_background': '#2d2d2d',
+                'tab_selected_margin_bottom': '-1px',
+                'tab_hover_background': '#3f3f3f',
+                'tab_radius': '5px',
+                'tab_min_width': '100px'
+            }
         }
     }
     
@@ -517,7 +556,7 @@ class LayoutConfig:
             'font_size': '9pt',
             'item_padding': '2px 4px',
             'item_height': '24px',
-            'item_hover_bg': '#f0f0f0',
+            'item_hover_bg': '#f5faff',
             'item_border_bottom': '1px solid #e0e0e0',
             'outline': 'none',
             'indentation': '20px',
@@ -596,37 +635,49 @@ class LayoutConfig:
         
         # Splitter style
         'splitter': {
-            'handle_width': '0px',
-            'handle_height': '0px',
+            'handle_width': '0.5px',
+            'handle_height': '100%',
             'handle_margin': '0px',
             'handle_padding': '0px',
-            'handle_background': 'transparent'
+            'handle_background': '#e8e8e8',
+            'handle_hover_background': '#d0d0d0',
+            'handle_pressed_background': '#c4c4c4',
+            'handle_border_radius': '3px'
         }
     }
     
     # Style generation methods
     @classmethod
-    def get_main_window_style(cls):
+    def get_main_window_style(cls, theme=None):
         """Get main window style"""
-        mw_style = cls.MAIN_WINDOW_STYLES
+        theme_key = theme or cls.DEFAULT_THEME
+        theme_styles = cls.MAIN_WINDOW_STYLES.get(theme_key, cls.MAIN_WINDOW_STYLES[cls.DEFAULT_THEME])
+        mw_style = theme_styles['main_window']
+        widget_style = theme_styles['widget']
         return f"""
             QMainWindow {{
-                background-color: {mw_style['main_window']['background_color']};
-                color: {mw_style['main_window']['color']};
+                background-color: {mw_style['background_color']};
+                color: {mw_style['color']};
             }}
             
             QWidget {{
-                background-color: {mw_style['widget']['background_color']};
-                color: {mw_style['widget']['color']};
-                font-family: {mw_style['widget']['font_family']};
+                background-color: {widget_style['background_color']};
+                color: {widget_style['color']};
+                font-family: {widget_style['font_family']};
             }}
         """
     
     @classmethod
-    def get_tab_widget_style(cls):
+    def get_tab_widget_style(cls, theme=None):
         """Get Tab widget style"""
-        tab_style = cls.MAIN_WINDOW_STYLES['tab_widget']
+        theme_key = theme or cls.DEFAULT_THEME
+        theme_styles = cls.MAIN_WINDOW_STYLES.get(theme_key, cls.MAIN_WINDOW_STYLES[cls.DEFAULT_THEME])
+        tab_style = theme_styles['tab_widget']
         return f"""
+            QTabWidget {{
+                border: {tab_style['widget_border']};
+                background-color: {tab_style['widget_background']};
+            }}
             QTabWidget::pane {{
                 border: {tab_style['pane_border']};
                 background-color: {tab_style['pane_background']};
@@ -642,6 +693,9 @@ class LayoutConfig:
                 margin-bottom: {tab_style['tab_margin_bottom']};
                 background-color: {tab_style['tab_background']};
                 border-bottom: {tab_style['tab_border_bottom']};
+                border-top-left-radius: {tab_style['tab_radius']};
+                border-top-right-radius: {tab_style['tab_radius']};
+                min-width: {tab_style['tab_min_width']};
             }}
             QTabBar::tab:selected {{
                 border-bottom: {tab_style['tab_selected_border_bottom']};
@@ -740,7 +794,6 @@ class LayoutConfig:
         """Get tree widget style"""
         tree_style = cls.SELECTION_TAB_STYLES['tree_widget']
         branch_style = cls.SELECTION_TAB_STYLES['tree_branch']
-        
         return f"""
             QTreeWidget {{
                 background-color: {tree_style['background_color']};
@@ -748,6 +801,10 @@ class LayoutConfig:
                 selection-background-color: {tree_style['selection_color']};
                 font-size: {tree_style['font_size']};
                 outline: {tree_style['outline']};
+            }}
+            QTreeWidget::indicator {{
+                width: 0px;
+                height: 0px;
             }}
             QTreeWidget::item {{
                 padding: {tree_style['item_padding']};
@@ -761,68 +818,20 @@ class LayoutConfig:
                 background-color: {tree_style['selection_color']};
                 color: white;
             }}
-            
-            /* Expand/collapse branch styles */
             QTreeWidget::branch {{
                 background: {branch_style['background']};
+                border: {branch_style['border']};
             }}
-            
-            /* Branches with children that are open */
             QTreeWidget::branch:has-children:open {{
-                background: {branch_style['background']};
-                image: {branch_style['image']};
-                border: {branch_style['border']};
+                image: url(:/qt-project.org/styles/commonstyle/images/branch-open.png);
             }}
-            QTreeWidget::branch:has-children:open:hover {{
-                background: {branch_style['hover_bg']};
-                border-radius: {branch_style['hover_border_radius']};
-            }}
-            
-            /* Branches with children that are closed */
             QTreeWidget::branch:has-children:closed {{
-                background: {branch_style['background']};
-                image: {branch_style['image']};
-                border: {branch_style['border']};
-            }}
-            QTreeWidget::branch:has-children:closed:hover {{
-                background: {branch_style['hover_bg']};
-                border-radius: {branch_style['hover_border_radius']};
-            }}
-            
-            /* Branches without children */
-            QTreeWidget::branch:has-siblings:!has-children {{
-                background: {branch_style['background']};
-                image: {branch_style['image']};
-                border: {branch_style['border']};
-            }}
-            
-            /* Use Unicode symbols as expand/collapse indicators */
-            QTreeWidget::branch:has-children:closed::before {{
-                content: "{branch_style['closed_icon']}";
-                color: {branch_style['icon_color']};
-                font-size: {branch_style['icon_font_size']};
-                font-weight: {branch_style['icon_font_weight']};
-                padding-left: {branch_style['icon_padding_left']};
-            }}
-            QTreeWidget::branch:has-children:open::before {{
-                content: "{branch_style['open_icon']}";
-                color: {branch_style['icon_color']};
-                font-size: {branch_style['icon_font_size']};
-                font-weight: {branch_style['icon_font_weight']};
-                padding-left: {branch_style['icon_padding_left']};
-            }}
-            
-            /* Remove default branch lines */
-            QTreeWidget::branch:has-siblings:adjoins-item,
-            QTreeWidget::branch:!has-children:!has-siblings:adjoins-item,
-            QTreeWidget::branch:has-children:!has-siblings:closed,
-            QTreeWidget::branch:has-children:!has-siblings:open {{
-                border: {branch_style['border']};
-                background: {branch_style['background']};
+                image: url(:/qt-project.org/styles/commonstyle/images/branch-closed.png);
             }}
         """
-    
+
     @classmethod
+
     def get_scroll_area_style(cls):
         """Get scroll area style"""
         scroll_style = cls.SELECTION_TAB_STYLES['scroll_area']
@@ -912,6 +921,19 @@ class LayoutConfig:
                 margin: {splitter_style['handle_margin']};
                 padding: {splitter_style['handle_padding']};
                 background: {splitter_style['handle_background']};
+                border-radius: {splitter_style['handle_border_radius']};
+            }}
+            QSplitter::handle:horizontal {{
+                width: {splitter_style['handle_width']};
+            }}
+            QSplitter::handle:vertical {{
+                height: {splitter_style['handle_height']};
+            }}
+            QSplitter::handle:hover {{
+                background: {splitter_style['handle_hover_background']};
+            }}
+            QSplitter::handle:pressed {{
+                background: {splitter_style['handle_pressed_background']};
             }}
         """
     
@@ -1053,3 +1075,4 @@ class LayoutConfig:
                 border-radius: {style['border_radius']};
             }}
         """
+

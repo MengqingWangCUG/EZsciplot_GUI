@@ -1,14 +1,16 @@
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox,
     QComboBox, QTextEdit, QSizePolicy, QPushButton, QLineEdit, QScrollArea,
-    QGridLayout
+    QGridLayout, QFileDialog, QInputDialog, QDialog
 )
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QShortcut, QKeySequence
+from PySide6.QtCore import Qt, QEvent, QRegularExpression
+from PySide6.QtGui import QShortcut, QKeySequence, QRegularExpressionValidator
 from mpl_canvas import MplCanvas
 from entrance import TestData
 from config import LayoutConfig
 import numpy as np
+import os
+from functools import partial
 
 
 class DataTab(QWidget):
@@ -19,8 +21,15 @@ class DataTab(QWidget):
         
         # 初始化列表属性
         self.data_boxes = []
-        self.plot_canvases = []  # 确保这个属性被初始化
-        self.canvases = []  # 兼容性属性
+        self.canvases = []  # Keep references to plot canvases
+        self._wheel_filter_sources = set()
+        self._filter_pattern = QRegularExpression(r'\s*(?:>=|<=|!=|>|<|=)?\s*-?\d+(?:\.\d+)?\s*')
+        self._filter_validator_pattern = QRegularExpression(
+            r'\s*$|^\s*(?:>=|<=|!=|>|<|=)?\s*-?\d+(?:\.\d+)?\s*$'
+        )
+        self._filter_error_tip = (
+            'Use >, >=, <, <=, != or = followed by a number (e.g. ">=3.5").'
+        )
         
         self.init_test_data()
         self.create_ui()
@@ -67,6 +76,10 @@ class DataTab(QWidget):
         middle_layout.addWidget(data_group, 1)
         
         layout.addLayout(middle_layout, 1)
+
+        # Initialize dropdowns with available data
+        self.populate_site_list()
+        self.populate_range_lists()
 
         # After creating filter inputs, setup their callbacks
         self.setup_filter_input_callbacks()
@@ -139,8 +152,6 @@ class DataTab(QWidget):
         specimen_layout.addWidget(specimen_label)
         specimen_layout.addWidget(self.specimen_combo)
         status_layout.addLayout(specimen_layout)
-        status_layout.addLayout(site_layout)
-        status_layout.addLayout(specimen_layout)
         
         status_group.setLayout(status_layout)
         return status_group
@@ -183,10 +194,6 @@ class DataTab(QWidget):
         down_layout.addWidget(self.range_down_combo)
         range_layout.addLayout(down_layout)
         
-        # Add two rows to vertical layout
-        range_layout.addLayout(up_layout)
-        range_layout.addLayout(down_layout)
-        
         range_group.setLayout(range_layout)
         return range_group
 
@@ -216,6 +223,7 @@ class DataTab(QWidget):
             input_field.setPlaceholderText("Enter")
             input_field.setFixedWidth(config['input_width'])
             input_field.setStyleSheet(self._get_lineedit_style())
+            self._configure_filter_input(input_field)
             
             self.filter_inputs.append(input_field)
             row = i // 2
@@ -245,10 +253,10 @@ class DataTab(QWidget):
         scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         scroll_area.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         scroll_area.setFocusPolicy(Qt.FocusPolicy.WheelFocus)
-        scroll_area.wheelEvent = self.scroll_area_wheel_event
         scroll_content = QWidget()
         scroll_content.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        scroll_content.wheelEvent = self.scroll_area_wheel_event
+        self._register_wheel_target(scroll_area.viewport())
+        self._register_wheel_target(scroll_content)
         main_grid_layout = QGridLayout(scroll_content)
         main_grid_layout.setSpacing(config['grid_spacing'])
         main_grid_layout.setContentsMargins(*config['scroll_margins'])
@@ -286,20 +294,20 @@ class DataTab(QWidget):
         control_layout = QHBoxLayout()
         control_layout.setSpacing(config['control_spacing'])
         
-        # Refresh button
-        refresh_btn = QPushButton("Refresh")
-        refresh_btn.clicked.connect(lambda checked, idx=index: self.refresh_plot(idx))
-        refresh_btn.setMaximumWidth(config['button_max_width'])
-        refresh_btn.setStyleSheet(self._get_button_style())
-        
         # Export button
         export_btn = QPushButton("Export")
         export_btn.clicked.connect(lambda checked, idx=index: self.export_plot(idx))
         export_btn.setMaximumWidth(config['button_max_width'])
         export_btn.setStyleSheet(self._get_button_style())
         
-        control_layout.addWidget(refresh_btn)
+        # Edit labels button
+        edit_btn = QPushButton("Edit Labels")
+        edit_btn.clicked.connect(lambda checked, idx=index: self.edit_plot_labels(idx))
+        edit_btn.setMaximumWidth(config['button_max_width'])
+        edit_btn.setStyleSheet(self._get_button_style())
+        
         control_layout.addWidget(export_btn)
+        control_layout.addWidget(edit_btn)
         control_layout.addStretch()
         
         # Create matplotlib canvas
@@ -307,7 +315,7 @@ class DataTab(QWidget):
         canvas.setMinimumSize(*config['canvas_min_size'])
         canvas.setMaximumSize(16777215, 16777215)
         canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        canvas.wheelEvent = self.canvas_wheel_event
+        self._register_wheel_target(canvas)
         
         # Set fixed aspect ratio to 1:1 (square)
         canvas.setFixedAspectRatio(True)
@@ -444,7 +452,62 @@ class DataTab(QWidget):
             QLineEdit:focus {{
                 border: {style['focus_border']};
             }}
+            QLineEdit[invalid="true"] {{
+                border: 1px solid #dc3545;
+                background-color: #fff5f5;
+            }}
         """
+
+    def _configure_filter_input(self, input_field: QLineEdit):
+        """Attach validator and default state to filter inputs"""
+        validator = QRegularExpressionValidator(self._filter_validator_pattern, input_field)
+        input_field.setValidator(validator)
+        input_field.setProperty("invalid", False)
+        self._refresh_widget_style(input_field)
+
+    def _refresh_widget_style(self, widget):
+        """Force Qt to re-evaluate dynamic properties for styling"""
+        widget.style().unpolish(widget)
+        widget.style().polish(widget)
+        widget.update()
+
+    def _register_wheel_target(self, widget):
+        """Track widgets that should proxy wheel events through the tab"""
+        if widget not in self._wheel_filter_sources:
+            widget.installEventFilter(self)
+            self._wheel_filter_sources.add(widget)
+
+    def _set_filter_input_state(self, input_field: QLineEdit, is_valid: bool, message: str = ""):
+        """Toggle invalid state visuals and tooltip messaging"""
+        input_field.setProperty("invalid", not is_valid)
+        input_field.setToolTip(message if not is_valid else "")
+        self._refresh_widget_style(input_field)
+
+    def _is_filter_condition_valid(self, condition_text: str) -> bool:
+        """Validate filter condition against supported syntax"""
+        if not condition_text or not condition_text.strip():
+            return True
+        condition_text = condition_text.strip()
+        if not self._filter_pattern.match(condition_text).hasMatch():
+            return False
+        if hasattr(self, 'test_data_generator') and self.test_data_generator:
+            return self.test_data_generator.parse_filter_expression(condition_text) is not None
+        return True
+
+    def _update_filter_feedback(self, parameter_index: int, condition_text: str) -> bool:
+        """Update validation feedback for a specific filter input"""
+        if parameter_index >= len(self.filter_inputs):
+            return False
+        condition_text = condition_text or ""
+        is_valid = self._is_filter_condition_valid(condition_text)
+        has_content = bool(condition_text.strip())
+        message = self._filter_error_tip if has_content and not is_valid else ""
+        self._set_filter_input_state(
+            self.filter_inputs[parameter_index],
+            is_valid or not has_content,
+            message
+        )
+        return is_valid or not has_content
 
     def _get_data_display_style(self):
         """Get data display style from config"""
@@ -553,12 +616,7 @@ class DataTab(QWidget):
 
     def load_specimen_data(self, site, specimen):
         """Load specimen data using test data generator from entrance.py"""
-        try:
-            range_up = int(self.range_up_combo.currentText())
-            range_down = int(self.range_down_combo.currentText())
-        except ValueError:
-            range_up = 100
-            range_down = 1
+        range_up, range_down = self.get_current_range_values()
         specimen_summary = self.test_data_generator.get_range_based_specimen_summary(
             site, specimen, range_up, range_down)
         for i, (key, value) in enumerate(specimen_summary.items()):
@@ -609,13 +667,7 @@ class DataTab(QWidget):
         if not hasattr(self, 'test_data_generator'):
             return
     
-        try:
-            # Get current range settings
-            range_up = int(self.range_up_combo.currentText())
-            range_down = int(self.range_down_combo.currentText())
-        except (ValueError, AttributeError):
-            range_up = 100
-            range_down = 1
+        range_up, range_down = self.get_current_range_values()
     
         try:
             # Use range-affected data to fill data boxes
@@ -643,11 +695,55 @@ class DataTab(QWidget):
         else:
             raise IndexError(f"Plot index {index} out of range. Available plots: 0-{len(self.canvases)-1}")
 
+    def edit_plot_labels(self, index):
+        """Edit labels for specified plot"""
+        if 0 <= index < len(self.canvases):
+            canvas = self.canvases[index]
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Edit Plot Labels")
+            dialog.setModal(True)
+            dialog.setMinimumWidth(400)
+            
+            layout = QVBoxLayout(dialog)
+            
+            xlabel_layout = QHBoxLayout()
+            xlabel_layout.addWidget(QLabel("X Label:"))
+            xlabel_input = QLineEdit(canvas.ax.get_xlabel())
+            xlabel_layout.addWidget(xlabel_input)
+            layout.addLayout(xlabel_layout)
+            
+            ylabel_layout = QHBoxLayout()
+            ylabel_layout.addWidget(QLabel("Y Label:"))
+            ylabel_input = QLineEdit(canvas.ax.get_ylabel())
+            ylabel_layout.addWidget(ylabel_input)
+            layout.addLayout(ylabel_layout)
+            
+            title_layout = QHBoxLayout()
+            title_layout.addWidget(QLabel("Title:"))
+            title_input = QLineEdit(canvas.ax.get_title())
+            title_layout.addWidget(title_input)
+            layout.addLayout(title_layout)
+            
+            button_layout = QHBoxLayout()
+            button_layout.addStretch()
+            ok_btn = QPushButton("OK")
+            ok_btn.clicked.connect(dialog.accept)
+            cancel_btn = QPushButton("Cancel")
+            cancel_btn.clicked.connect(dialog.reject)
+            button_layout.addWidget(ok_btn)
+            button_layout.addWidget(cancel_btn)
+            layout.addLayout(button_layout)
+            
+            if dialog.exec():
+                canvas.ax.set_xlabel(xlabel_input.text())
+                canvas.ax.set_ylabel(ylabel_input.text())
+                canvas.ax.set_title(title_input.text())
+                canvas.fig.tight_layout()
+                canvas.draw()
+    
     def export_plot(self, index):
         """Export specified plot"""
         if 0 <= index < len(self.canvases):
-            from PySide6.QtWidgets import QFileDialog
-            
             file_path, _ = QFileDialog.getSaveFileName(
                 self,
                 f"Export Plot {index + 1}",
@@ -657,27 +753,37 @@ class DataTab(QWidget):
             
             if file_path:
                 try:
-                    canvas = self.canvases[index]
-                    canvas.fig.savefig(file_path, dpi=300, bbox_inches='tight')
+                    self.export_plot_to_path(index, file_path)
                 except Exception as e:
-                    print(f"Error exporting plot {index + 1}: {e}")
+                    message = f"Error exporting plot {index + 1}: {e}"
+                    if hasattr(self.main_window, 'show_error'):
+                        self.main_window.show_error(message, e)
+                    else:
+                        print(message)
+                else:
+                    return file_path
+        return None
 
-    def refresh_plot(self, index):
-        """Refresh specified plot"""
+    def export_plot_to_path(self, index, file_path):
+        """Save a plot to a specific path"""
         if 0 <= index < len(self.canvases):
-            current_site = self.site_combo.currentText()
-            current_specimen = self.specimen_combo.currentText()
-            
-            if (current_site != "Select a site..." and 
-                current_specimen != "Select a specimen..."):
-                # Regenerate data and update single plot
-                specimen_data = self.test_data_generator.generate_specimen_data(current_site, current_specimen)
-                canvas = self.canvases[index]
-                plot_key = f'plot{index+1}'
-                
-                if plot_key in specimen_data:
-                    data = specimen_data[plot_key]
-                    self.plot_dynamic_data(canvas, data, index)
+            canvas = self.canvases[index]
+            canvas.fig.savefig(file_path, dpi=300, bbox_inches='tight')
+            return file_path
+        raise IndexError(f"Plot index {index} out of range.")
+
+    def export_all_plots(self, directory):
+        """Export every plot to the provided directory"""
+        if not os.path.isdir(directory):
+            raise ValueError(f"Directory '{directory}' does not exist.")
+        saved_paths = []
+        for index in range(len(self.canvases)):
+            file_path = os.path.join(directory, f"plot_{index + 1}.png")
+            self.export_plot_to_path(index, file_path)
+            saved_paths.append(file_path)
+        return saved_paths
+
+
 
     def clear_plot(self, index):
         """Clear specified plot"""
@@ -690,16 +796,17 @@ class DataTab(QWidget):
                           ha='center', va='center', transform=canvas.ax.transAxes)
             canvas.draw()
 
-    def scroll_area_wheel_event(self, event):
-        """Handle scroll area mouse wheel event"""
-        self.handle_wheel_event(event)
-
-    def canvas_wheel_event(self, event):
-        """Handle canvas mouse wheel event"""
-        self.handle_wheel_event(event)
+    def eventFilter(self, source, event):
+        """Route wheel events from registered widgets to unified handler"""
+        if event.type() == QEvent.Type.Wheel and source in self._wheel_filter_sources:
+            self.handle_wheel_event(event)
+            return True
+        return super().eventFilter(source, event)
 
     def handle_wheel_event(self, event):
         """Unified wheel event handling"""
+        if not hasattr(self, 'scroll_area') or self.scroll_area is None:
+            return
         v_scrollbar = self.scroll_area.verticalScrollBar()
         h_scrollbar = self.scroll_area.horizontalScrollBar()
         
@@ -757,47 +864,6 @@ class DataTab(QWidget):
             if hasattr(self, 'range_down_combo') and self.range_down_combo:
                 self.range_down_combo.currentTextChanged.connect(self.on_range_down_changed)
         self._connections_established = True
-
-    def on_site_changed(self, site_name):
-        """Handle site selection change"""
-        # Clear current specimen selection
-        self.specimen_combo.clear()
-        self.specimen_combo.addItem("Select a specimen...")
-        
-        if site_name != "Select a site..." and hasattr(self, 'test_data_generator'):
-            if site_name in self.test_data_generator.sites:
-                # Populate specimens for this site
-                specimens = self.test_data_generator.sites[site_name]
-                for specimen in specimens:
-                    self.specimen_combo.addItem(specimen)
-                
-                # Enable specimen dropdown
-                self.specimen_combo.setEnabled(True)
-            else:
-                self.specimen_combo.setEnabled(False)
-        else:
-            self.specimen_combo.setEnabled(False)
-        
-        # Clear data display and plots - but don't trigger any loading
-        self.clear_data_display()
-        self.clear_all_plots()
-        self.update_navigation_buttons()
-
-    # def on_specimen_changed(self, specimen_name):
-    #     """Handle specimen selection change"""
-    #     current_site = self.site_combo.currentText()
-        
-    #     # Only load data when user explicitly selects a valid specimen
-    #     if (specimen_name != "Select a specimen..." and 
-    #         current_site != "Select a site..." and
-    #         specimen_name and current_site):
-    #         self.load_specimen_data(current_site, specimen_name)
-    #     else:
-    #         # Clear data display, but don't trigger traversal
-    #         self.clear_data_display()
-    #         self.clear_all_plots()
-        
-    #     self.update_navigation_buttons()
 
     def reset_controls(self):
         """Reset control states"""
@@ -891,23 +957,42 @@ class DataTab(QWidget):
         if not current_site or current_site == "Select a site...":
             return
         
-        if current_site in self.sample_data and current_specimen in self.sample_data[current_site]:
-            specimens = self.sample_data[current_site]
-            current_specimen_index = specimens.index(current_specimen)
-            
-            if current_specimen_index > 0:
-                self.specimen_combo.setCurrentText(specimens[current_specimen_index - 1])
+        # Get specimens from Site object
+        if current_site in self.sample_data:
+            site_obj = self.sample_data[current_site]
+            if hasattr(site_obj, 'get_sample_names'):
+                specimens = site_obj.get_sample_names()
+            elif hasattr(site_obj, 'samples'):
+                specimens = list(site_obj.samples.keys())
             else:
-                sites = list(self.sample_data.keys())
-                current_site_index = sites.index(current_site)
+                specimens = []
+            
+            if current_specimen in specimens:
+                current_specimen_index = specimens.index(current_specimen)
                 
-                if current_site_index > 0:
-                    previous_site = sites[current_site_index - 1]
-                    self.site_combo.setCurrentText(previous_site)
+                if current_specimen_index > 0:
+                    self.specimen_combo.setCurrentText(specimens[current_specimen_index - 1])
+                else:
+                    sites = list(self.sample_data.keys())
+                    current_site_index = sites.index(current_site)
                     
-                    if previous_site in self.sample_data and self.sample_data[previous_site]:
-                        last_specimen = self.sample_data[previous_site][-1]
-                        self.specimen_combo.setCurrentText(last_specimen)
+                    if current_site_index > 0:
+                        previous_site = sites[current_site_index - 1]
+                        self.site_combo.setCurrentText(previous_site)
+                        
+                        # Get specimens from previous site
+                        if previous_site in self.sample_data:
+                            prev_site_obj = self.sample_data[previous_site]
+                            if hasattr(prev_site_obj, 'get_sample_names'):
+                                prev_specimens = prev_site_obj.get_sample_names()
+                            elif hasattr(prev_site_obj, 'samples'):
+                                prev_specimens = list(prev_site_obj.samples.keys())
+                            else:
+                                prev_specimens = []
+                            
+                            if prev_specimens:
+                                last_specimen = prev_specimens[-1]
+                                self.specimen_combo.setCurrentText(last_specimen)
 
     def navigate_next(self):
         """Navigate to next specimen"""
@@ -917,23 +1002,42 @@ class DataTab(QWidget):
         if not current_site or current_site == "Select a site...":
             return
         
-        if current_site in self.sample_data and current_specimen in self.sample_data[current_site]:
-            specimens = self.sample_data[current_site]
-            current_specimen_index = specimens.index(current_specimen)
-            
-            if current_specimen_index < len(specimens) - 1:
-                self.specimen_combo.setCurrentText(specimens[current_specimen_index + 1])
+        # Get specimens from Site object
+        if current_site in self.sample_data:
+            site_obj = self.sample_data[current_site]
+            if hasattr(site_obj, 'get_sample_names'):
+                specimens = site_obj.get_sample_names()
+            elif hasattr(site_obj, 'samples'):
+                specimens = list(site_obj.samples.keys())
             else:
-                sites = list(self.sample_data.keys())
-                current_site_index = sites.index(current_site)
+                specimens = []
+            
+            if current_specimen in specimens:
+                current_specimen_index = specimens.index(current_specimen)
                 
-                if current_site_index < len(sites) - 1:
-                    next_site = sites[current_site_index + 1]
-                    self.site_combo.setCurrentText(next_site)
+                if current_specimen_index < len(specimens) - 1:
+                    self.specimen_combo.setCurrentText(specimens[current_specimen_index + 1])
+                else:
+                    sites = list(self.sample_data.keys())
+                    current_site_index = sites.index(current_site)
                     
-                    if next_site in self.sample_data and self.sample_data[next_site]:
-                        first_specimen = self.sample_data[next_site][0]
-                        self.specimen_combo.setCurrentText(first_specimen)
+                    if current_site_index < len(sites) - 1:
+                        next_site = sites[current_site_index + 1]
+                        self.site_combo.setCurrentText(next_site)
+                        
+                        # Get specimens from next site
+                        if next_site in self.sample_data:
+                            next_site_obj = self.sample_data[next_site]
+                            if hasattr(next_site_obj, 'get_sample_names'):
+                                next_specimens = next_site_obj.get_sample_names()
+                            elif hasattr(next_site_obj, 'samples'):
+                                next_specimens = list(next_site_obj.samples.keys())
+                            else:
+                                next_specimens = []
+                            
+                            if next_specimens:
+                                first_specimen = next_specimens[0]
+                                self.specimen_combo.setCurrentText(first_specimen)
 
     def update_navigation_buttons(self):
         """Update navigation button states"""
@@ -953,7 +1057,15 @@ class DataTab(QWidget):
         can_go_next = False
         
         if current_site in self.sample_data:
-            specimens = self.sample_data[current_site]
+            # Get specimens from Site object
+            site_obj = self.sample_data[current_site]
+            if hasattr(site_obj, 'get_sample_names'):
+                specimens = site_obj.get_sample_names()
+            elif hasattr(site_obj, 'samples'):
+                specimens = list(site_obj.samples.keys())
+            else:
+                specimens = []
+            
             sites = list(self.sample_data.keys())
             
             try:
@@ -997,25 +1109,63 @@ class DataTab(QWidget):
                     canvas.ax.grid(True, alpha=0.3)
                     canvas.draw()
 
+
+
+    def _ensure_valid_range_order(self, changed='up'):
+        """Keep range lower bound from exceeding the upper bound"""
+        if not hasattr(self, 'range_up_combo') or not hasattr(self, 'range_down_combo'):
+            return
+        try:
+            range_up = int(self.range_up_combo.currentText())
+            range_down = int(self.range_down_combo.currentText())
+        except ValueError:
+            return
+        if range_down > range_up:
+            if changed == 'up':
+                self.range_down_combo.blockSignals(True)
+                self.range_down_combo.setCurrentText(str(range_up))
+                self.range_down_combo.blockSignals(False)
+            else:
+                self.range_up_combo.blockSignals(True)
+                self.range_up_combo.setCurrentText(str(range_down))
+                self.range_up_combo.blockSignals(False)
+
+    def get_current_range_values(self):
+        """Return a validated (upper, lower) tuple"""
+        range_config = self.config.RANGE_VALUES
+        default_up = range_config['default_up']
+        default_down = range_config['default_down']
+        try:
+            range_up = int(self.range_up_combo.currentText())
+            range_down = int(self.range_down_combo.currentText())
+        except (ValueError, AttributeError):
+            range_up = default_up
+            range_down = default_down
+        if range_down > range_up:
+            range_down, range_up = range_up, range_down
+        return range_up, range_down
+
     def on_range_up_changed(self, value):
         """Handle range up selection change"""
+        self._ensure_valid_range_order('up')
         self.on_range_changed()
 
     def on_range_down_changed(self, value):
         """Handle range down selection change"""
+        self._ensure_valid_range_order('down')
         self.on_range_changed()
 
     def on_range_changed(self):
-        """Handle range change - only update data boxes, not plots"""
+        """Handle range change - auto refresh data boxes (not plots)"""
         current_site = self.site_combo.currentText()
         current_specimen = self.specimen_combo.currentText()
         
-        # Only update data boxes when both site and specimen are selected
+        # Auto refresh: update data boxes when range changes
         if (current_site != "Select a site..." and 
             current_specimen != "Select a specimen..." and
             current_site and current_specimen):
             
-            # Only update data boxes (affected by range), not the plots
+            # Auto refresh: only update data boxes (affected by range), not the plots
             self.load_specimen_data_boxes(current_site, current_specimen)
             
             # Apply filter colors if callback exists
@@ -1023,25 +1173,31 @@ class DataTab(QWidget):
                 self.apply_filter_colors_callback(current_site, current_specimen)
 
     def on_specimen_changed(self, specimen):
-        """Handle specimen selection change"""
+        """Handle specimen selection change - auto refresh plots"""
         if not specimen or specimen == "Select a specimen...":
+            self.clear_data_display()
+            self.clear_all_plots()
             return
             
         current_site = self.site_combo.currentText()
         if current_site and current_site != "Select a site...":
+            # Auto refresh: load complete data when specimen changes
             self.load_specimen_data_complete(current_site, specimen)
 
     def on_site_changed(self, site):
-        """Handle site selection change"""
+        """Handle site selection change - auto refresh plots"""
         if not site or site == "Select a site...":
+            self.clear_data_display()
+            self.clear_all_plots()
             return
             
         # Update specimen combo for the selected site
         self.update_specimen_combo(site)
         
-        # If there's a current specimen selection, load its data
+        # If there's a current specimen selection, auto refresh its data
         current_specimen = self.specimen_combo.currentText()
         if current_specimen and current_specimen != "Select a specimen...":
+            # Auto refresh: load complete data when site changes
             self.load_specimen_data_complete(site, current_specimen)
 
     def load_specimen_data_complete(self, site, specimen):
@@ -1071,8 +1227,16 @@ class DataTab(QWidget):
         # Add default option
         self.specimen_combo.addItem("Select a specimen...")
         
+        # Get specimens from Site object
+        site_obj = self.test_data_generator.sites[site]
+        if hasattr(site_obj, 'get_sample_names'):
+            specimens = site_obj.get_sample_names()
+        elif hasattr(site_obj, 'samples'):
+            specimens = list(site_obj.samples.keys())
+        else:
+            specimens = []
+        
         # Add all specimens for this site
-        specimens = self.test_data_generator.sites[site]
         for specimen in specimens:
             self.specimen_combo.addItem(specimen)
         
@@ -1085,19 +1249,68 @@ class DataTab(QWidget):
             return
         
         for i, filter_input in enumerate(self.filter_inputs):
-            # Use lambda with default parameter to capture the current index
             filter_input.textChanged.connect(
-                lambda text, index=i: self.on_individual_filter_changed(index, text)
+                partial(self.on_individual_filter_changed, i)
             )
-            
-            # Also connect to editingFinished for when user stops typing
             filter_input.editingFinished.connect(
-                lambda index=i: self.on_filter_editing_finished(index)
+                partial(self.on_filter_editing_finished, i)
             )
 
+    def save_state(self, settings):
+        """Persist current selections and filters"""
+        settings.beginGroup("DataTab")
+        site = self.site_combo.currentText() if self.site_combo else ""
+        specimen = self.specimen_combo.currentText() if self.specimen_combo else ""
+        if site == "Select a site...":
+            site = ""
+        if specimen == "Select a specimen...":
+            specimen = ""
+        settings.setValue("site", site)
+        settings.setValue("specimen", specimen)
+        if hasattr(self, 'range_up_combo') and hasattr(self, 'range_down_combo'):
+            settings.setValue("range_up", self.range_up_combo.currentText())
+            settings.setValue("range_down", self.range_down_combo.currentText())
+        filters = [field.text() for field in getattr(self, 'filter_inputs', [])]
+        settings.setValue("filters", filters)
+        settings.endGroup()
+
+    def restore_state(self, settings):
+        """Restore selections and filters from persisted settings"""
+        if not settings:
+            return
+        settings.beginGroup("DataTab")
+        site = settings.value("site", "")
+        specimen = settings.value("specimen", "")
+        range_up = settings.value("range_up", "")
+        range_down = settings.value("range_down", "")
+        filters = settings.value("filters", [])
+        settings.endGroup()
+
+        if site:
+            self.site_combo.setCurrentText(site)
+        if specimen:
+            self.specimen_combo.setCurrentText(specimen)
+        if range_up and hasattr(self, 'range_up_combo'):
+            value = str(range_up)
+            if self.range_up_combo.findText(value) != -1:
+                self.range_up_combo.setCurrentText(value)
+        if range_down and hasattr(self, 'range_down_combo'):
+            value = str(range_down)
+            if self.range_down_combo.findText(value) != -1:
+                self.range_down_combo.setCurrentText(value)
+
+        if isinstance(filters, str):
+            filters = [filters]
+        if hasattr(self, 'filter_inputs'):
+            for widget, value in zip(self.filter_inputs, filters):
+                widget.setText(value)
+
     def on_individual_filter_changed(self, parameter_index, condition_text):
-        """Handle individual filter input changes"""
-        # Only update the color for this specific parameter
+        """Handle individual filter input changes - auto refresh colors"""
+        if not self._update_filter_feedback(parameter_index, condition_text):
+            return
+        
+        # Auto refresh: update the color for this specific parameter
         current_site = self.site_combo.currentText()
         current_specimen = self.specimen_combo.currentText()
         
@@ -1105,11 +1318,11 @@ class DataTab(QWidget):
             current_specimen != "Select a specimen..." and
             current_site and current_specimen):
             
-            # Update color for this specific parameter only
+            # Auto refresh: update color for this specific parameter only
             self.update_single_parameter_color(current_site, current_specimen, parameter_index, condition_text)
 
     def on_filter_editing_finished(self, parameter_index):
-        """Handle when user finishes editing a filter input"""
+        """Handle when user finishes editing a filter input - auto refresh colors"""
         # Confirm the condition for this parameter
         current_site = self.site_combo.currentText()
         current_specimen = self.specimen_combo.currentText()
@@ -1122,10 +1335,13 @@ class DataTab(QWidget):
                 filter_input = self.filter_inputs[parameter_index]
                 condition_text = filter_input.text().strip()
                 
+                if not self._update_filter_feedback(parameter_index, condition_text):
+                    return
+                
                 # Store as confirmed condition
                 filter_input._last_confirmed_condition = condition_text
                 
-                # Update color for this parameter
+                # Auto refresh: update color for this parameter
                 self.update_single_parameter_color(current_site, current_specimen, parameter_index, condition_text)
 
     def update_single_parameter_color(self, site, specimen, parameter_index, condition_str):
@@ -1140,12 +1356,10 @@ class DataTab(QWidget):
             return
         
         # Get current range settings
-        try:
-            range_up = int(self.range_up_combo.currentText())
-            range_down = int(self.range_down_combo.currentText())
-        except (ValueError, AttributeError):
-            range_up = 100
-            range_down = 1
+        range_up, range_down = self.get_current_range_values()
+
+        if condition_str and not self._is_filter_condition_valid(condition_str):
+            return
         
         # Check this specific parameter condition independently
         param_match = test_data.check_parameter_condition_independently(
@@ -1174,12 +1388,7 @@ class DataTab(QWidget):
         test_data = self.test_data_generator
     
         # Get current range settings
-        try:
-            range_up = int(self.range_up_combo.currentText())
-            range_down = int(self.range_down_combo.currentText())
-        except (ValueError, AttributeError):
-            range_up = 100
-            range_down = 1
+        range_up, range_down = self.get_current_range_values()
         from config import LayoutConfig
         filter_colors = LayoutConfig.STYLES['filter_colors']
     
@@ -1187,6 +1396,9 @@ class DataTab(QWidget):
         for i, data_box in enumerate(self.data_boxes):
             if i < len(test_data.parameter_labels) and i < len(self.filter_inputs):
                 condition_str = self.filter_inputs[i].text().strip()
+                
+                if condition_str and not self._is_filter_condition_valid(condition_str):
+                    continue
                 
                 # Check this specific parameter condition independently
                 param_match = test_data.check_parameter_condition_independently(
@@ -1242,4 +1454,5 @@ class DataTab(QWidget):
                         font-size: 9pt;
                     }}
                 """)
+
 
